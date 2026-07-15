@@ -1,0 +1,103 @@
+          g_dim: 4,
++            lambda: 0.8,
++            independent_subspace: true,
++            use_feedback: true,
++            gated_feedback: false,
++            use_retrieval: false,
++            retrieval_window: 0,
++            d_key: 4,
++        },
++        seed,
++    )
++}
++
+ fn total_loss_and_routes(model: &LmModel, tokens: &[usize]) -> (f32, Vec<Vec<Vec<usize>>>) {
+     autodiff::tape_clear();
+     let out = model.forward_sequence(tokens);
+@@ -90,6 +114,11 @@ fn lm_gradient_matches_finite_difference() {
+     run_lm_gradient_check(build_small_lm(11), "feedback+gated");
+ }
+ 
++#[test]
++fn lm_gradient_matches_finite_difference_independent_subspace() {
++    run_lm_gradient_check(build_small_lm_independent(11), "independent-subspace");
++}
++
+ #[test]
+ fn lm_gradient_matches_finite_difference_with_retrieval() {
+     run_lm_gradient_check(build_small_lm_with_retrieval(11), "retrieval");
+@@ -124,6 +153,8 @@ fn run_lm_gradient_check(model: LmModel, label: &str) {
+     let mut skipped_routing = 0usize;
+     let mut skipped_below_floor = 0usize;
+     let mut max_relative_error = 0.0f32;
++    let mut max_normalized_error = 0.0f32;
++    let mut max_absolute_error = 0.0f32;
+ 
+     for (tensor_index, parameter) in params.iter().enumerate() {
+         let analytic = parameter.grad();
+@@ -156,9 +187,15 @@ fn run_lm_gradient_check(model: LmModel, label: &str) {
+                 8.0e-2,
+             ) {
+                 Ok(GradientComparison::BelowFloor) => skipped_below_floor += 1,
+-                Ok(GradientComparison::Checked { rel_error, .. }) => {
++                Ok(GradientComparison::Checked {
++                    abs_error,
++                    rel_error,
++                    normalized_error,
++                }) => {
+                     checked += 1;
++                    max_absolute_error = max_absolute_error.max(abs_error);
+                     max_relative_error = max_relative_error.max(rel_error);
++                    max_normalized_error = max_normalized_error.max(normalized_error);
+                 }
+                 Err(details) => panic!(
+                     "[{label}] LM gradient mismatch: tensor={tensor_index} coordinate=({row},{col}) {details}"
+@@ -168,7 +205,7 @@ fn run_lm_gradient_check(model: LmModel, label: &str) {
+     }
+ 
+     println!(
+-        "[{label}] checked {checked} tensor-wide entries across {} tensors; skipped {skipped_routing} routing boundaries and {skipped_below_floor} pairs below floor; max relative error {max_relative_error:.6}",
++        "[{label}] checked {checked} tensor-wide entries across {} tensors; skipped {skipped_routing} routing boundaries and {skipped_below_floor} pairs below floor; max abs error {max_absolute_error:.8}, max raw relative error {max_relative_error:.6}, max tolerance-normalized error {max_normalized_error:.6}",
+         params.len()
+     );
+     assert!(
+diff --git a/tests/lm_ops_grad_check.rs b/tests/lm_ops_grad_check.rs
+index 6645834..4ab44d0 100644
+--- a/tests/lm_ops_grad_check.rs
++++ b/tests/lm_ops_grad_check.rs
+@@ -64,6 +64,8 @@ fn embedding_and_cross_entropy_gradients_match_finite_difference() {
+ 
+     let mut checked = 0;
+     let mut max_rel_err: f32 = 0.0;
++    let mut max_normalized_err: f32 = 0.0;
++    let mut max_abs_err: f32 = 0.0;
+     let (rows, cols) = table.shape();
+     for r in 0..rows {
+         for c in 0..cols {
+@@ -77,8 +79,14 @@ fn embedding_and_cross_entropy_gradients_match_finite_difference() {
+             let a = analytic[[r, c]];
+             match compare_gradient(a, numeric, 1.0e-6, 2.0e-3, 8.0e-2) {
+                 Ok(GradientComparison::BelowFloor) => {}
+-                Ok(GradientComparison::Checked { rel_error, .. }) => {
++                Ok(GradientComparison::Checked {
++                    abs_error,
++                    rel_error,
++                    normalized_error,
++                }) => {
++                    max_abs_err = max_abs_err.max(abs_error);
+                     max_rel_err = max_rel_err.max(rel_error);
++                    max_normalized_err = max_normalized_err.max(normalized_error);
+                     checked += 1;
+                 }
+                 Err(details) => {
+@@ -87,7 +95,9 @@ fn embedding_and_cross_entropy_gradients_match_finite_difference() {
+             }
+         }
+     }
+-    println!("checked {checked} entries, max relative error = {max_rel_err:.5}");
++    println!(
++        "checked {checked} entries, max abs error = {max_abs_err:.8}, max raw relative error = {max_rel_err:.5}, max tolerance-normalized error = {max_normalized_err:.5}"
++    );
+     assert!(
+         checked > 0,
+         "sanity: should have checked at least one entry"
