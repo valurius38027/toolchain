@@ -19,8 +19,9 @@ jobs:
       - name: Reconstruct and patch ESM source tree
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p /tmp/esm-src /tmp/validation-results
+          exec > >(tee /tmp/validation-results/reconstruct.log) 2>&1
+          set -euxo pipefail
           cat esm-validation/source.part* | base64 --decode > /tmp/esm-source.tar.gz
           gzip --test /tmp/esm-source.tar.gz
           tar -xzf /tmp/esm-source.tar.gz -C /tmp/esm-src
