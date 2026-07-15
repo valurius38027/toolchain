@@ -20,86 +20,91 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/esm-src
+          mkdir -p /tmp/esm-src /tmp/validation-results
           cat esm-validation/source.part* | base64 --decode > /tmp/esm-source.tar.gz
           gzip --test /tmp/esm-source.tar.gz
           tar -xzf /tmp/esm-source.tar.gz -C /tmp/esm-src
           test -f /tmp/esm-src/Cargo.toml
-          find /tmp/esm-src -maxdepth 3 -type f | sort
+          find /tmp/esm-src -maxdepth 3 -type f | sort > /tmp/validation-results/source-manifest.txt
 
       - name: Record Rust versions
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          timeout 110s rustc --version
-          timeout 110s cargo --version
+          {
+            timeout 110s rustc --version
+            timeout 110s cargo --version
+          } 2>&1 | tee /tmp/validation-results/rust-versions.log
 
       - name: Fetch dependencies
         working-directory: /tmp/esm-src
         shell: bash
-        run: timeout 110s cargo fetch --locked
+        run: timeout 110s cargo fetch --locked 2>&1 | tee /tmp/validation-results/cargo-fetch.log
 
-      - name: Check formatting
+      - name: Format source and archive canonical tree
         working-directory: /tmp/esm-src
         shell: bash
-        run: timeout 110s cargo fmt --all -- --check
+        run: |
+          set -euo pipefail
+          timeout 110s cargo fmt --all 2>&1 | tee /tmp/validation-results/cargo-fmt.log
+          timeout 110s cargo fmt --all -- --check 2>&1 | tee -a /tmp/validation-results/cargo-fmt.log
+          tar --exclude=target --exclude=results -czf /tmp/validation-results/formatted-source.tar.gz .
 
       - name: Compile library and binaries
         working-directory: /tmp/esm-src
         shell: bash
-        run: timeout 110s cargo check --all-targets --locked
+        run: timeout 110s cargo check --all-targets --locked 2>&1 | tee /tmp/validation-results/cargo-check.log
 
       - name: Run data and metadata tests
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          timeout 110s cargo test --locked --test induction_data -- --nocapture
-          timeout 110s cargo test --locked --test lm_forward_metadata -- --nocapture
-          timeout 110s cargo test --locked --test gradient_test_support -- --nocapture
-          timeout 110s cargo test --locked --test optimizer_partition -- --nocapture
+          timeout 110s cargo test --locked --test induction_data -- --nocapture 2>&1 | tee /tmp/validation-results/test-induction-data.log
+          timeout 110s cargo test --locked --test lm_forward_metadata -- --nocapture 2>&1 | tee /tmp/validation-results/test-lm-forward-metadata.log
+          timeout 110s cargo test --locked --test gradient_test_support -- --nocapture 2>&1 | tee /tmp/validation-results/test-gradient-support.log
+          timeout 110s cargo test --locked --test optimizer_partition -- --nocapture 2>&1 | tee /tmp/validation-results/test-optimizer-partition.log
 
       - name: Run operator gradient tests
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          timeout 110s cargo test --locked --test attention_ops_grad_check -- --nocapture
-          timeout 110s cargo test --locked --test lm_ops_grad_check -- --nocapture
+          timeout 110s cargo test --locked --test attention_ops_grad_check -- --nocapture 2>&1 | tee /tmp/validation-results/test-attention-ops.log
+          timeout 110s cargo test --locked --test lm_ops_grad_check -- --nocapture 2>&1 | tee /tmp/validation-results/test-lm-ops.log
 
       - name: Run model gradient tests
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          timeout 110s cargo test --locked --test baseline_grad_check -- --nocapture
-          timeout 110s cargo test --locked --test grad_check -- --nocapture
-          timeout 110s cargo test --locked --test lm_grad_check -- --nocapture
+          timeout 110s cargo test --locked --test baseline_grad_check -- --nocapture 2>&1 | tee /tmp/validation-results/test-baseline-grad.log
+          timeout 110s cargo test --locked --test grad_check -- --nocapture 2>&1 | tee /tmp/validation-results/test-model-grad.log
+          timeout 110s cargo test --locked --test lm_grad_check -- --nocapture 2>&1 | tee /tmp/validation-results/test-lm-grad.log
 
       - name: Build validation binaries
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          timeout 110s cargo build --release --locked --bin validated_induction
-          timeout 110s cargo build --release --locked --bin context_baselines
-          timeout 110s cargo build --release --locked --bin v10_separate_optimizer
+          timeout 110s cargo build --release --locked --bin validated_induction 2>&1 | tee /tmp/validation-results/build-validated-induction.log
+          timeout 110s cargo build --release --locked --bin context_baselines 2>&1 | tee /tmp/validation-results/build-context-baselines.log
+          timeout 110s cargo build --release --locked --bin v10_separate_optimizer 2>&1 | tee /tmp/validation-results/build-v10.log
 
       - name: Run short induction validation shards
         working-directory: /tmp/esm-src
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p results
           ESM_STEPS=8 ESM_BATCH=2 ESM_SEED_START=0 ESM_SEED_COUNT=1 \
-            ESM_OUTPUT=results/induction_seed_0.csv \
+            ESM_OUTPUT=/tmp/validation-results/induction_seed_0.csv \
             timeout 110s ./target/release/validated_induction \
-            2>results/induction_seed_0_summary.txt
+            2>/tmp/validation-results/induction_seed_0_summary.txt
           ESM_STEPS=8 ESM_BATCH=2 ESM_SEED_START=1 ESM_SEED_COUNT=1 \
-            ESM_OUTPUT=results/induction_seed_1.csv \
+            ESM_OUTPUT=/tmp/validation-results/induction_seed_1.csv \
             timeout 110s ./target/release/validated_induction \
-            2>results/induction_seed_1_summary.txt
+            2>/tmp/validation-results/induction_seed_1_summary.txt
 
       - name: Run short context baseline validation
         working-directory: /tmp/esm-src
@@ -108,13 +113,13 @@ jobs:
           set -euo pipefail
           ESM_EPOCHS=1 ESM_SENTENCES=30 ESM_HOLDOUT_SENTENCES=12 ESM_SEED=42 \
             timeout 110s ./target/release/context_baselines \
-            >results/context_baselines.csv \
-            2>results/context_baselines_summary.txt
+            >/tmp/validation-results/context_baselines.csv \
+            2>/tmp/validation-results/context_baselines_summary.txt
 
       - name: Publish validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: esm-validation-results
-          path: /tmp/esm-src/results
-          if-no-files-found: warn
+          path: /tmp/validation-results
+          if-no-files-found: error
