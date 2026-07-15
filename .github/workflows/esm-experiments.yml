@@ -1,0 +1,93 @@
+name: ESM corrected multi-seed experiments
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - kind: induction
+            shard: i00
+            seed_start: 0
+            seed_count: 3
+          - kind: induction
+            shard: i01
+            seed_start: 3
+            seed_count: 3
+          - kind: induction
+            shard: i02
+            seed_start: 6
+            seed_count: 3
+          - kind: induction
+            shard: i03
+            seed_start: 9
+            seed_count: 3
+          - kind: induction
+            shard: i04
+            seed_start: 12
+            seed_count: 3
+          - kind: induction
+            shard: i05
+            seed_start: 15
+            seed_count: 3
+          - kind: induction
+            shard: i06
+            seed_start: 18
+            seed_count: 3
+          - kind: induction
+            shard: i07
+            seed_start: 21
+            seed_count: 3
+          - kind: induction
+            shard: i08
+            seed_start: 24
+            seed_count: 3
+          - kind: induction
+            shard: i09
+            seed_start: 27
+            seed_count: 3
+          - kind: context
+            shard: c00
+            seed_start: 0
+            seed_count: 10
+          - kind: context
+            shard: c01
+            seed_start: 10
+            seed_count: 10
+          - kind: context
+            shard: c02
+            seed_start: 20
+            seed_count: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: ${{ matrix.kind }}-${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run experiment shard
+        env:
+          EXPERIMENT: ${{ matrix.kind }}
+          SEED_START: ${{ matrix.seed_start }}
+          SEED_COUNT: ${{ matrix.seed_count }}
+          ESM_STEPS: 600
+          ESM_BATCH: 4
+          ESM_EVAL_SAMPLES: 96
+          ESM_EPOCHS: 3
+          ESM_SENTENCES: 80
+          ESM_HOLDOUT_SENTENCES: 24
+          ESM_DATA_SEED: 7
+        run: bash esm-validation/run-experiment-shard.sh
+      - name: Publish shard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: esm-${{ matrix.kind }}-${{ matrix.shard }}
+          path: /tmp/experiment-results
+          if-no-files-found: error
