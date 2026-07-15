@@ -25,6 +25,7 @@ jobs:
           gzip --test /tmp/esm-source.tar.gz
           tar -xzf /tmp/esm-source.tar.gz -C /tmp/esm-src
           test -f /tmp/esm-src/Cargo.toml
+          timeout 110s cargo fmt --manifest-path /tmp/esm-src/Cargo.toml --all
           cat esm-validation/latest.part* > /tmp/esm-latest.patch
           echo 'c5ffbacefda9a42f5946fd5e90d3de6dcba4ae24d672b4ef14b0a57ab8c4ea1d  /tmp/esm-latest.patch' | sha256sum -c -
           git -C /tmp/esm-src init -q
