@@ -20,6 +20,7 @@ git -C "$SOURCE" init -q
 git -C "$SOURCE" apply --check /tmp/esm-latest.patch
 git -C "$SOURCE" apply /tmp/esm-latest.patch
 cp esm-validation/model_invariants.rs "$SOURCE/tests/model_invariants.rs"
+cp esm-validation/corpus_split.rs "$SOURCE/tests/corpus_split.rs"
 find "$SOURCE" -maxdepth 3 -type f | sort > "$RESULTS/source-manifest.txt"
 
 cd "$SOURCE"
