@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-for command_name in tar zstd sha256sum jq git awk cp; do
+for command_name in tar zstd sha256sum jq awk cp date; do
   require_command "$command_name"
 done
 
@@ -20,8 +20,10 @@ CHECKSUM=$ARCHIVE.sha256
 
 [[ -d $SOURCE_ROOT/repo ]] || fail 'offline repository has not been built'
 [[ -s $LOCK_FILE ]] || fail 'package lock has not been generated'
+[[ -n ${GITHUB_SHA:-} ]] || fail 'GITHUB_SHA must identify the source commit'
+[[ ${SOURCE_DATE_EPOCH:-} =~ ^[0-9]+$ ]] || fail 'SOURCE_DATE_EPOCH must be an integer Unix timestamp'
 
-rm -rf "$BUNDLE_DIR" "$ARCHIVE" "$CHECKSUM"
+rm -rf "$BUNDLE_DIR" "$ARCHIVE" "$CHECKSUM" "$OUT_DIR/build-metadata.json"
 mkdir -p "$BUNDLE_DIR/manifests" "$BUNDLE_DIR/scripts/lib" "$BUNDLE_DIR/docs"
 cp -a "$SOURCE_ROOT/repo" "$BUNDLE_DIR/repo"
 cp "$ROOT/manifests/qt6-debian13-packages.txt" "$BUNDLE_DIR/manifests/"
@@ -33,8 +35,8 @@ cp "$ROOT/README.md" "$BUNDLE_DIR/README.md"
 cp "$ROOT/docs/RECOVERY.md" "$BUNDLE_DIR/docs/RECOVERY.md"
 chmod 0755 "$BUNDLE_DIR/scripts/install-offline.sh" "$BUNDLE_DIR/scripts/verify-installed.sh"
 
-commit_sha=${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}
-source_date_epoch=${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct "$commit_sha")}
+commit_sha=$GITHUB_SHA
+source_date_epoch=$SOURCE_DATE_EPOCH
 build_time=$(date -u -d "@$source_date_epoch" '+%Y-%m-%dT%H:%M:%SZ')
 qt_version=$(awk -F '\t' '$1 == "qt6-base-dev" { print $2; exit }' "$LOCK_FILE")
 qtcreator_version=$(awk -F '\t' '$1 == "qtcreator" { print $2; exit }' "$LOCK_FILE")
@@ -59,6 +61,7 @@ jq -n \
     qtcreator_version: $qtcreator_version,
     package_count: $package_count
   }' > "$BUNDLE_DIR/build-metadata.json"
+cp "$BUNDLE_DIR/build-metadata.json" "$OUT_DIR/build-metadata.json"
 
 (
   cd "$OUT_DIR"
