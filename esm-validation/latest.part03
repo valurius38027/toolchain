@@ -1,0 +1,183 @@
+_sentences` synthetic sentences concatenated into
+-/// one string, and the sorted list of unique characters that appear in it
+-/// (the character-level vocabulary).
+-pub fn generate_corpus(rng: &mut StdRng, n_sentences: usize) -> (String, Vec<char>) {
+-    let mut text = String::new();
+-    for _ in 0..n_sentences {
+-        text.push_str(&gen_sentence(rng));
++/// Number of distinct sentences admitted by the synthetic grammar.
++const SENTENCE_SPACE: usize = ADJS.len() * NOUNS.len() * VERBS.len() * PREPS.len() * NOUNS.len();
++
++fn generate_unique_sentences(
++    rng: &mut StdRng,
++    count: usize,
++    seen: &mut HashSet<String>,
++) -> Vec<String> {
++    assert!(
++        seen.len() + count <= SENTENCE_SPACE,
++        "requested more unique sentences than the grammar can generate"
++    );
++    let mut sentences = Vec::with_capacity(count);
++    while sentences.len() < count {
++        let sentence = gen_sentence(rng);
++        if seen.insert(sentence.clone()) {
++            sentences.push(sentence);
++        }
+     }
+-    let mut chars: Vec<char> = text
+-        .chars()
+-        .collect::<std::collections::BTreeSet<_>>()
++    sentences
++}
++
++fn characters_in(texts: &[&str]) -> Vec<char> {
++    texts
++        .iter()
++        .flat_map(|text| text.chars())
++        .collect::<BTreeSet<_>>()
+         .into_iter()
+-        .collect();
+-    chars.sort_unstable();
++        .collect()
++}
++
++/// Generates a corpus with no duplicate sentence strings.
++pub fn generate_corpus(rng: &mut StdRng, n_sentences: usize) -> (String, Vec<char>) {
++    let mut seen = HashSet::with_capacity(n_sentences);
++    let text = generate_unique_sentences(rng, n_sentences, &mut seen).concat();
++    let chars = characters_in(&[&text]);
+     (text, chars)
+ }
+ 
++/// Generates sentence-level unique training and holdout partitions.
++///
++/// A different RNG position is not sufficient to guarantee a held-out set:
++/// finite template grammars can emit the same literal sentence twice. This
++/// function enforces set disjointness and builds a vocabulary covering both
++/// partitions, so holdout evaluation cannot silently contain training strings
++/// or unknown characters.
++pub fn generate_disjoint_corpora(
++    rng: &mut StdRng,
++    train_sentences: usize,
++    holdout_sentences: usize,
++) -> (String, String, Vec<char>) {
++    assert!(
++        train_sentences + holdout_sentences <= SENTENCE_SPACE,
++        "requested split exceeds the finite synthetic grammar"
++    );
++    let mut seen = HashSet::with_capacity(train_sentences + holdout_sentences);
++    let train = generate_unique_sentences(rng, train_sentences, &mut seen).concat();
++    let holdout = generate_unique_sentences(rng, holdout_sentences, &mut seen).concat();
++    let chars = characters_in(&[&train, &holdout]);
++    (train, holdout, chars)
++}
++
+ pub struct CharVocab {
+     pub chars: Vec<char>,
+     pub char_to_idx: std::collections::HashMap<char, usize>,
+@@ -72,15 +116,3 @@ impl CharVocab {
+         ids.iter().map(|&i| self.chars[i]).collect()
+     }
+ }
+-
+-/// A random held-out permutation test set: distinct sentences from training
+-/// (different RNG stream), so a perplexity gap between train and held-out
+-/// reflects genuine generalization to the grammar's statistical structure,
+-/// not memorization of literal training strings.
+-pub fn generate_holdout(rng: &mut StdRng, n_sentences: usize) -> String {
+-    let mut text = String::new();
+-    for _ in 0..n_sentences {
+-        text.push_str(&gen_sentence(rng));
+-    }
+-    text
+-}
+diff --git a/src/lm.rs b/src/lm.rs
+index b2443c3..9717e1e 100644
+--- a/src/lm.rs
++++ b/src/lm.rs
+@@ -17,6 +17,9 @@ pub struct LmHyperParams {
+     pub num_layers: usize,
+     pub g_dim: usize,
+     pub lambda: f32,
++    /// If true, each sparse layer writes a dedicated g_dim/num_layers slice
++    /// rather than summing all layer summaries into one shared subspace.
++    pub independent_subspace: bool,
+     pub use_feedback: bool,
+     pub gated_feedback: bool,
+     /// If true, adds a sliding-window content-addressable attention readout
+@@ -98,16 +101,30 @@ impl LmModel {
+         );
+         assert!(hp.num_layers > 0, "num_layers must be positive");
+         assert!(hp.g_dim > 0, "g_dim must be positive");
+-        assert!((0.0..=1.0).contains(&hp.lambda), "lambda must be in [0, 1]");
++        assert!(
++            hp.lambda.is_finite() && (0.0..=1.0).contains(&hp.lambda),
++            "lambda must be finite and in [0, 1]"
++        );
++        assert!(
++            !hp.gated_feedback || hp.use_feedback,
++            "gated_feedback requires use_feedback"
++        );
++        assert!(hp.d_key > 0, "d_key must be positive");
++        let summary_dim = if hp.independent_subspace {
++            assert_eq!(
++                hp.g_dim % hp.num_layers,
++                0,
++                "independent_subspace requires g_dim to be divisible by num_layers"
++            );
++            hp.g_dim / hp.num_layers
++        } else {
++            hp.g_dim
++        };
+         if hp.use_retrieval {
+             assert!(
+                 hp.retrieval_window > 0,
+                 "retrieval_window must be positive when retrieval is enabled"
+             );
+-            assert!(
+-                hp.d_key > 0,
+-                "d_key must be positive when retrieval is enabled"
+-            );
+         }
+         let mut rng = StdRng::seed_from_u64(seed);
+         let embedding = Tensor::new(xavier(&mut rng, hp.vocab_size, hp.d_model));
+@@ -117,7 +134,7 @@ impl LmModel {
+                     &mut rng,
+                     hp.d_model,
+                     hp.block_hidden,
+-                    hp.g_dim,
++                    summary_dim,
+                     hp.num_blocks,
+                 )
+             })
+@@ -213,6 +230,11 @@ impl LmModel {
+     /// own computation only depends on tokens 0..=t (and, if use_feedback,
+     /// on g accumulated from steps before t), preserving causality.
+     pub fn forward_sequence(&self, token_ids: &[usize]) -> LmForwardOutput {
++        assert!(!token_ids.is_empty(), "sequence must be non-empty");
++        assert!(
++            token_ids.iter().all(|&token| token < self.hp.vocab_size),
++            "token id out of vocabulary"
++        );
+         let g_dim = self.hp.g_dim;
+         let k = self.hp.num_blocks;
+         let num_layers = self.layers.len();
+@@ -316,10 +338,15 @@ impl LmModel {
+ 
+             per_step_layer_indices.push(this_step_indices);
+ 
+-            let mut update = step_summaries[0].clone();
+-            for s in &step_summaries[1..] {
+-                update = add(&update, s);
+-            }
++            let update = if self.hp.independent_subspace {
++                crate::autodiff::concat_row(&step_summaries)
++            } else {
++                let mut update = step_summaries[0].clone();
++                for summary in &step_summaries[1..] {
++                    update = add(&update, summary);
++                }
++                update
++            };
+             g = add(
+ 
