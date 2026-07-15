@@ -1,0 +1,192 @@
+v7_gated_feedback.rs b/src/bin/v7_gated_feedback.rs
+index e8aa43a..12ac641 100644
+--- a/src/bin/v7_gated_feedback.rs
++++ b/src/bin/v7_gated_feedback.rs
+@@ -41,7 +41,6 @@ where
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda: 0.9,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback,
+         gated_feedback,
+diff --git a/src/bin/v8_induction_baseline.rs b/src/bin/v8_induction_baseline.rs
+index b9782a0..610aba0 100644
+--- a/src/bin/v8_induction_baseline.rs
++++ b/src/bin/v8_induction_baseline.rs
+@@ -27,6 +27,7 @@ fn train_and_eval(
+         num_layers: 2,
+         g_dim: 16,
+         lambda: 0.9,
++        independent_subspace: false,
+         use_feedback,
+         gated_feedback: false,
+         use_retrieval,
+diff --git a/src/bin/v9_induction_diagnostic.rs b/src/bin/v9_induction_diagnostic.rs
+index f9bb337..890eadf 100644
+--- a/src/bin/v9_induction_diagnostic.rs
++++ b/src/bin/v9_induction_diagnostic.rs
+@@ -24,6 +24,7 @@ fn train_and_eval(use_retrieval: bool, n_steps: usize, batch_size: usize, seed:
+         num_layers: 2,
+         g_dim: 16,
+         lambda: 0.9,
++        independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+         use_retrieval,
+diff --git a/src/bin/validated_induction.rs b/src/bin/validated_induction.rs
+index cebd265..332b712 100644
+--- a/src/bin/validated_induction.rs
++++ b/src/bin/validated_induction.rs
+@@ -8,13 +8,13 @@ use rand::SeedableRng;
+ use std::collections::BTreeMap;
+ use std::fs::File;
+ use std::io::{BufWriter, Write};
++use std::time::Instant;
+ 
+ const VOCAB_SIZE: usize = 16;
+ const SEQUENCE_LEN: usize = 24;
+ const RETRIEVAL_WINDOW: usize = 20;
+ const ROUTER_AUX_WEIGHT: f32 = 0.01;
+ const RETRIEVAL_AUX_WEIGHT: f32 = 0.5;
+-const EVALUATION_SAMPLES: usize = 48;
+ 
+ #[derive(Clone, Copy)]
+ struct Condition {
+@@ -56,6 +56,9 @@ struct ResultRow {
+     seed: u64,
+     condition: &'static str,
+     steps: usize,
++    parameters: usize,
++    evaluation_samples: usize,
++    elapsed_seconds: f64,
+     train_induction_loss: f32,
+     eval_induction_loss: f32,
+     eval_aux_loss: f32,
+@@ -79,6 +82,7 @@ fn model(condition: Condition, seed: u64) -> LmModel {
+             num_layers: 2,
+             g_dim: 16,
+             lambda: 0.9,
++            independent_subspace: false,
+             use_feedback: condition.feedback,
+             gated_feedback: false,
+             use_retrieval: condition.retrieval,
+@@ -93,9 +97,23 @@ fn model(condition: Condition, seed: u64) -> LmModel {
+     )
+ }
+ 
+-fn train_condition(condition: Condition, seed: u64, steps: usize, batch: usize) -> ResultRow {
++fn train_condition(
++    condition: Condition,
++    seed: u64,
++    steps: usize,
++    batch: usize,
++    evaluation_samples: usize,
++) -> ResultRow {
++    let started = Instant::now();
+     let model = model(condition, seed);
+     let parameters = model.all_params();
++    let parameter_count: usize = parameters
++        .iter()
++        .map(|parameter| {
++            let (rows, columns) = parameter.shape();
++            rows * columns
++        })
++        .sum();
+     let mut optimizer = Adam::new(&parameters, 3.0e-3);
+     let mut training_rng = StdRng::seed_from_u64(10_000 + seed);
+     let mut final_train_induction_loss = f32::NAN;
+@@ -147,7 +165,7 @@ fn train_condition(condition: Condition, seed: u64, steps: usize, batch: usize)
+     let mut induction_total = 0.0f32;
+     let mut auxiliary_total = 0.0f32;
+     let mut auxiliary_count = 0usize;
+-    for _ in 0..EVALUATION_SAMPLES {
++    for _ in 0..evaluation_samples {
+         let sample = make_induction_sample(
+             &mut evaluation_rng,
+             SEQUENCE_LEN,
+@@ -171,8 +189,11 @@ fn train_condition(condition: Condition, seed: u64, steps: usize, batch: usize)
+         seed,
+         condition: condition.name,
+         steps,
++        parameters: parameter_count,
++        evaluation_samples,
++        elapsed_seconds: started.elapsed().as_secs_f64(),
+         train_induction_loss: final_train_induction_loss,
+-        eval_induction_loss: induction_total / EVALUATION_SAMPLES as f32,
++        eval_induction_loss: induction_total / evaluation_samples as f32,
+         eval_aux_loss: if auxiliary_count == 0 {
+             0.0
+         } else {
+@@ -222,6 +243,11 @@ fn main() {
+     let batch = env_usize("ESM_BATCH", 4);
+     let seed_start = env_usize("ESM_SEED_START", 0) as u64;
+     let seed_count = env_usize("ESM_SEED_COUNT", 1);
++    let evaluation_samples = env_usize("ESM_EVAL_SAMPLES", 48);
++    assert!(steps > 0, "ESM_STEPS must be positive");
++    assert!(batch > 0, "ESM_BATCH must be positive");
++    assert!(seed_count > 0, "ESM_SEED_COUNT must be positive");
++    assert!(evaluation_samples > 0, "ESM_EVAL_SAMPLES must be positive");
+     let output_path = std::env::var("ESM_OUTPUT")
+         .unwrap_or_else(|_| "results/validated_induction.csv".to_string());
+ 
+@@ -229,10 +255,16 @@ fn main() {
+     for seed in seed_start..seed_start + seed_count as u64 {
+         for condition in CONDITIONS {
+             eprintln!(
+-                "running seed={seed} condition={} steps={steps} batch={batch}",
++                "running seed={seed} condition={} steps={steps} batch={batch} evaluation_samples={evaluation_samples}",
+                 condition.name
+             );
+-            rows.push(train_condition(condition, seed, steps, batch));
++            rows.push(train_condition(
++                condition,
++                seed,
++                steps,
++                batch,
++                evaluation_samples,
++            ));
+         }
+     }
+ 
+@@ -240,16 +272,19 @@ fn main() {
+     let mut writer = BufWriter::new(file);
+     writeln!(
+         writer,
+-        "seed,condition,steps,train_induction_loss,eval_induction_loss,eval_aux_loss"
++        "seed,condition,steps,parameters,evaluation_samples,elapsed_seconds,train_induction_loss,eval_induction_loss,eval_aux_loss"
+     )
+     .unwrap();
+     for row in &rows {
+         writeln!(
+             writer,
+-            "{},{},{},{:.6},{:.6},{:.6}",
++            "{},{},{},{},{},{:.6},{:.6},{:.6},{:.6}",
+             row.seed,
+             row.condition,
+             row.steps,
++            row.parameters,
++            row.evaluation_samples,
++            row.elapsed_seconds,
+             row.train_induction_loss,
+             row.eval_induction_loss,
+             row.eval_aux_loss
+diff --git a/src/corpus.rs b/src/corpus.rs
+index e26ef14..4201c14 100644
+--- a/src/corpus.rs
++++ b/src/corpus.rs
+@@ -7,8 +7,7 @@
+ /// across sentences) without any copyright question.
+ use rand::rngs::StdRng;
+ use rand::seq::SliceRandom;
+-#[allow(unused_imports)]
+-use rand::Rng;
++use std::collections::{BTreeSet, HashSet};
+ 
+ const NOUNS: &[&str] = &[
+     "cat", "dog", "fox", "bird", "fish", "bear", "wolf", "mouse", "horse", "sheep",
+@@ -31,23 +30,68 @@ fn gen_sentence(rng: &mut StdRng) -> String {
+     format!("the {adj} {noun1} {verb} {prep} the {noun2}. ")
+ }
+ 
+-/// Generates a corpus of `n
