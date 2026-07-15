@@ -27,6 +27,7 @@ jobs:
           test -f /tmp/esm-src/Cargo.toml
           cat esm-validation/latest.part* > /tmp/esm-latest.patch
           echo 'c5ffbacefda9a42f5946fd5e90d3de6dcba4ae24d672b4ef14b0a57ab8c4ea1d  /tmp/esm-latest.patch' | sha256sum -c -
+          git -C /tmp/esm-src init -q
           git -C /tmp/esm-src apply --check /tmp/esm-latest.patch
           git -C /tmp/esm-src apply /tmp/esm-latest.patch
           cp esm-validation/model_invariants.rs /tmp/esm-src/tests/model_invariants.rs
@@ -54,7 +55,7 @@ jobs:
           set -euo pipefail
           timeout 110s cargo fmt --all 2>&1 | tee /tmp/validation-results/cargo-fmt.log
           timeout 110s cargo fmt --all -- --check 2>&1 | tee -a /tmp/validation-results/cargo-fmt.log
-          tar --exclude=target --exclude=results -czf /tmp/validation-results/formatted-source.tar.gz .
+          tar --exclude=.git --exclude=target --exclude=results -czf /tmp/validation-results/formatted-source.tar.gz .
 
       - name: Compile library and binaries
         working-directory: /tmp/esm-src
