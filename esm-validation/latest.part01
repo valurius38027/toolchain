@@ -1,0 +1,208 @@
+ning_sequences.len(),
++        holdout_sequences.len()
+     );
+-    println!("ema_feedback,{seed},{epochs},{parameters},{loss:.6}");
++    println!("condition,seed,epochs,parameters,holdout_nll,elapsed_seconds");
++    for seed in seed_start..seed_start + seed_count as u64 {
++        let (parameters, loss, seconds) = train_sparse(
++            vocabulary.vocab_size(),
++            &training_sequences,
++            &holdout_sequences,
++            epochs,
++            seed,
++            false,
++        );
++        println!("context_free,{seed},{epochs},{parameters},{loss:.6},{seconds:.6}");
+ 
+-    let (parameters, loss) = train_rnn(
+-        vocabulary.vocab_size(),
+-        &training_sequences,
+-        &holdout_sequences,
+-        epochs,
+-        seed,
+-    );
+-    println!("vanilla_rnn,{seed},{epochs},{parameters},{loss:.6}");
++        let (parameters, loss, seconds) = train_sparse(
++            vocabulary.vocab_size(),
++            &training_sequences,
++            &holdout_sequences,
++            epochs,
++            seed,
++            true,
++        );
++        println!("ema_feedback,{seed},{epochs},{parameters},{loss:.6},{seconds:.6}");
++
++        let (parameters, loss, seconds) = train_rnn(
++            vocabulary.vocab_size(),
++            &training_sequences,
++            &holdout_sequences,
++            epochs,
++            seed,
++        );
++        println!("vanilla_rnn,{seed},{epochs},{parameters},{loss:.6},{seconds:.6}");
++    }
+ }
+diff --git a/src/bin/diag.rs b/src/bin/diag.rs
+index 9405627..317e122 100644
+--- a/src/bin/diag.rs
++++ b/src/bin/diag.rs
+@@ -23,7 +23,6 @@ fn run(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef,
+         independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/diag_grad_probe.rs b/src/bin/diag_grad_probe.rs
+index 9b29d2f..af06ef8 100644
+--- a/src/bin/diag_grad_probe.rs
++++ b/src/bin/diag_grad_probe.rs
+@@ -31,7 +31,6 @@ fn main() {
+         value_hidden: 4,
+         signal_dim: 2,
+         lambda: 0.7,
+-        aux_coef: 0.01,
+         independent_subspace: true,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/lm_train.rs b/src/bin/lm_train.rs
+index b07b43f..4fc7181 100644
+--- a/src/bin/lm_train.rs
++++ b/src/bin/lm_train.rs
+@@ -1,9 +1,10 @@
+ use esm_block_sparse::autodiff::{self, add, scale_const};
+-use esm_block_sparse::corpus::{generate_corpus, generate_holdout, CharVocab};
++use esm_block_sparse::corpus::{generate_disjoint_corpora, CharVocab};
+ use esm_block_sparse::lm::{LmHyperParams, LmModel};
+ use esm_block_sparse::optim::Adam;
+ use ndarray::Array2;
+ use rand::rngs::StdRng;
++use rand::seq::SliceRandom;
+ use rand::SeedableRng;
+ 
+ const AUX_COEF: f32 = 0.01;
+@@ -46,6 +47,7 @@ fn train(
+         num_layers: 2,
+         g_dim: 24,
+         lambda: 0.9,
++        independent_subspace: false,
+         use_feedback,
+         gated_feedback,
+         use_retrieval: false,
+@@ -58,8 +60,12 @@ fn train(
+ 
+     let mut holdout_curve = Vec::with_capacity(n_epochs);
+ 
++    let mut order_rng = StdRng::seed_from_u64(seed ^ 0xA11C_E55E);
+     for epoch in 0..n_epochs {
+-        for seq in train_seqs {
++        let mut order: Vec<usize> = (0..train_seqs.len()).collect();
++        order.shuffle(&mut order_rng);
++        for index in order {
++            let seq = &train_seqs[index];
+             for p in &params {
+                 p.zero_grad();
+             }
+@@ -93,7 +99,7 @@ fn main() {
+     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("all");
+ 
+     let mut rng = StdRng::seed_from_u64(7);
+-    let (train_text, chars) = generate_corpus(&mut rng, 400);
++    let (train_text, holdout_text, chars) = generate_disjoint_corpora(&mut rng, 400, 80);
+     let vocab = CharVocab::new(chars);
+     println!(
+         "corpus: {} chars, vocab_size={}, sample: {:?}...\n",
+@@ -102,7 +108,6 @@ fn main() {
+         &train_text[..80.min(train_text.len())]
+     );
+ 
+-    let holdout_text = generate_holdout(&mut rng, 80);
+ 
+     let train_ids = vocab.encode(&train_text);
+     let holdout_ids = vocab.encode(&holdout_text);
+diff --git a/src/bin/scaffold.rs b/src/bin/scaffold.rs
+index 6cdda2f..1b9e1fc 100644
+--- a/src/bin/scaffold.rs
++++ b/src/bin/scaffold.rs
+@@ -37,7 +37,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/v10_separate_optimizer.rs b/src/bin/v10_separate_optimizer.rs
+index 83c5d5e..b6b7ab9 100644
+--- a/src/bin/v10_separate_optimizer.rs
++++ b/src/bin/v10_separate_optimizer.rs
+@@ -24,6 +24,7 @@ fn train_and_eval(retrieval_lr: f32, n_steps: usize, batch_size: usize, seed: u6
+         num_layers: 2,
+         g_dim: 16,
+         lambda: 0.9,
++        independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+         use_retrieval: true,
+diff --git a/src/bin/v2_zero_noise.rs b/src/bin/v2_zero_noise.rs
+index 50ead88..2672d06 100644
+--- a/src/bin/v2_zero_noise.rs
++++ b/src/bin/v2_zero_noise.rs
+@@ -26,7 +26,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/v3_subspace_compare.rs b/src/bin/v3_subspace_compare.rs
+index bc71c56..28c5a2c 100644
+--- a/src/bin/v3_subspace_compare.rs
++++ b/src/bin/v3_subspace_compare.rs
+@@ -26,7 +26,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef: AUX_COEF,
+         independent_subspace,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/v4_convergence.rs b/src/bin/v4_convergence.rs
+index 0a1cbd0..651aa64 100644
+--- a/src/bin/v4_convergence.rs
++++ b/src/bin/v4_convergence.rs
+@@ -26,7 +26,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef: AUX_COEF,
+         independent_subspace,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/bin/v5_feedback_sanity.rs b/src/bin/v5_feedback_sanity.rs
+index 385da27..544ffe7 100644
+--- a/src/bin/v5_feedback_sanity.rs
++++ b/src/bin/v5_feedback_sanity.rs
+@@ -25,7 +25,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda: 0.9,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback,
+         gated_feedback: false,
+diff --git a/src/bin/v6_cue_gated.rs b/src/bin/v6_cue_gated.rs
+index 745cc87..08ee7ee 100644
+--- a/src/bin/v6_cue_gated.rs
++++ b/src/bin/v6_cue_gated.rs
+@@ -25,7 +25,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda: 0.9,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback,
+         gated_feedback: false,
+diff --git a/src/bin/
