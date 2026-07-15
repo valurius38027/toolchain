@@ -18,9 +18,11 @@ REPO_DIR=$RELEASE_ROOT/repo
 POOL_DIR=$REPO_DIR/pool
 LOCK_FILE=$OUT_DIR/package-lock.tsv
 REQUESTED_FILE=$OUT_DIR/requested-packages.txt
+EMPTY_STATUS=$OUT_DIR/empty-dpkg-status
 
-rm -rf "$RELEASE_ROOT" "$OUT_DIR/apt-cache" "$LOCK_FILE" "$REQUESTED_FILE"
+rm -rf "$RELEASE_ROOT" "$OUT_DIR/apt-cache" "$LOCK_FILE" "$REQUESTED_FILE" "$EMPTY_STATUS"
 mkdir -p "$POOL_DIR/partial" "$OUT_DIR/apt-cache/partial"
+: > "$EMPTY_STATUS"
 
 mapfile -t PACKAGES < <(manifest_packages "$MANIFEST")
 ((${#PACKAGES[@]} > 0)) || fail 'package manifest is empty'
@@ -33,8 +35,9 @@ for package_name in "${PACKAGES[@]}"; do
   apt-cache show "$package_name" >/dev/null 2>&1 || fail "package is unavailable in Debian 13 repositories: $package_name"
 done
 
-log 'resolving and downloading package dependency closure'
+log 'resolving and downloading package dependency closure against an empty dpkg state'
 apt-get \
+  -o "Dir::State::status=$EMPTY_STATUS" \
   -o "Dir::Cache::archives=$POOL_DIR" \
   -o 'APT::Keep-Downloaded-Packages=true' \
   -o 'Acquire::Languages=none' \
