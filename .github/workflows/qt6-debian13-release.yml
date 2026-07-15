@@ -1,0 +1,328 @@
+name: Qt 6 Debian 13 Offline Toolchain
+
+on:
+  push:
+    branches:
+      - main
+      - "ci/**"
+    tags:
+      - "qt6-debian13-v*"
+    paths:
+      - ".github/workflows/qt6-debian13-release.yml"
+      - "manifests/**"
+      - "scripts/**"
+      - "smoke/**"
+      - "README.md"
+      - "docs/RECOVERY.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/qt6-debian13-release.yml"
+      - "manifests/**"
+      - "scripts/**"
+      - "smoke/**"
+      - "README.md"
+      - "docs/RECOVERY.md"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release after all restore gates pass
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Release tag, for example qt6-debian13-v2026.07.14.1
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qt6-debian13-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUNDLE_NAME: qt6-toolchain-debian13-amd64
+  BUILD_ARTIFACT: qt6-debian13-build-${{ github.run_id }}
+  VERIFY_ARTIFACT: qt6-debian13-verification-${{ github.run_id }}
+
+jobs:
+  lint:
+    name: Validate scripts and manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install ShellCheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Validate Bash and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/lib/common.sh scripts/build-offline-repo.sh scripts/package-release.sh scripts/install-offline.sh scripts/verify-installed.sh
+          shellcheck scripts/lib/common.sh scripts/build-offline-repo.sh scripts/package-release.sh scripts/install-offline.sh scripts/verify-installed.sh
+          awk '{ sub(/[[:space:]]*#.*/, "") } NF { print $1 }' manifests/qt6-debian13-packages.txt > /tmp/packages
+          test -s /tmp/packages
+          test -z "$(sort /tmp/packages | uniq -d)"
+
+  build:
+    name: Build offline repository and archive
+    needs: lint
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install packaging bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl dpkg-dev gzip jq zstd
+
+      - name: Resolve immutable source timestamp
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          commit_json=$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
+          commit_date=$(jq -er '.commit.committer.date' <<<"$commit_json")
+          source_date_epoch=$(date -u -d "$commit_date" +%s)
+          echo "SOURCE_DATE_EPOCH=$source_date_epoch" >> "$GITHUB_ENV"
+
+      - name: Build package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          bash scripts/build-offline-repo.sh
+          bash scripts/package-release.sh
+
+      - name: Audit generated assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "out/$BUNDLE_NAME.tar.zst"
+          test -s "out/$BUNDLE_NAME.tar.zst.sha256"
+          test -s out/package-lock.tsv
+          test -s out/build-metadata.json
+          zstd --test "out/$BUNDLE_NAME.tar.zst"
+          (cd out && sha256sum -c "$BUNDLE_NAME.tar.zst.sha256")
+          jq -e '.target == "debian-13-amd64" and .package_count > 0' out/build-metadata.json
+
+      - name: Upload build assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.BUILD_ARTIFACT }}
+          path: |
+            out/${{ env.BUNDLE_NAME }}.tar.zst
+            out/${{ env.BUNDLE_NAME }}.tar.zst.sha256
+            out/package-lock.tsv
+            out/build-metadata.json
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  restore:
+    name: Restore and test without external APT sources
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    steps:
+      - name: Install extraction bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates zstd
+
+      - name: Download build assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.BUILD_ARTIFACT }}
+          path: artifact
+
+      - name: Verify and extract archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifact
+          sha256sum -c "$BUNDLE_NAME.tar.zst.sha256"
+          zstd --test "$BUNDLE_NAME.tar.zst"
+          tar --zstd -xf "$BUNDLE_NAME.tar.zst"
+
+      - name: Remove external APT sources and cached indexes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /etc/apt/sources.list
+          rm -rf /etc/apt/sources.list.d/*
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Install solely from bundled repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "artifact/$BUNDLE_NAME/scripts/install-offline.sh"
+
+      - name: Run compiler, Qt and headless GUI gates
+        shell: bash
+        env:
+          VERIFICATION_REPORT: ${{ github.workspace }}/artifact/verification-report.txt
+          VERIFY_WORK_DIR: ${{ github.workspace }}/artifact/verification-work
+        run: |
+          set -euo pipefail
+          bash "artifact/$BUNDLE_NAME/scripts/verify-installed.sh"
+          grep -qx 'VERIFICATION_RESULT=PASS' "$VERIFICATION_REPORT"
+
+      - name: Upload verification report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.VERIFY_ARTIFACT }}
+          path: artifact/verification-report.txt
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish and remotely verify GitHub Release
+    needs: restore
+    if: >-
+      ${{
+        needs.restore.result == 'success' &&
+        (
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/qt6-debian13-v')) ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish)
+        )
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.BUILD_ARTIFACT }}
+          path: release-input
+
+      - name: Download verification report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.VERIFY_ARTIFACT }}
+          path: release-input
+
+      - name: Resolve and validate release tag
+        id: tag
+        shell: bash
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ $GITHUB_REF == refs/tags/qt6-debian13-v* ]]; then
+            tag=${GITHUB_REF#refs/tags/}
+          else
+            tag=$MANUAL_TAG
+          fi
+          [[ $tag =~ ^qt6-debian13-v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] || {
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Audit publication inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-input
+          for asset in \
+            "$BUNDLE_NAME.tar.zst" \
+            "$BUNDLE_NAME.tar.zst.sha256" \
+            package-lock.tsv \
+            build-metadata.json \
+            verification-report.txt; do
+            test -s "$asset" || { echo "Missing or empty asset: $asset" >&2; exit 1; }
+          done
+          sha256sum -c "$BUNDLE_NAME.tar.zst.sha256"
+          grep -qx 'VERIFICATION_RESULT=PASS' verification-report.txt
+
+      - name: Create draft Release and upload assets
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists and will not be overwritten: $TAG" >&2
+            exit 1
+          fi
+
+          cat > release-notes.md <<EOF
+          # Qt 6 Debian 13 Offline Toolchain
+
+          Built from commit \`$GITHUB_SHA\` in a clean Debian 13 amd64 container.
+
+          Publication is gated by a second-container offline installation, GCC and Clang builds, QtTest, QML lint, Widgets startup, QML/Quick 3D startup, and remote asset checksum verification.
+          EOF
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --draft
+
+          cleanup() {
+            status=$?
+            if [[ $status -ne 0 ]]; then
+              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          gh release upload "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            release-input/"$BUNDLE_NAME.tar.zst" \
+            release-input/"$BUNDLE_NAME.tar.zst.sha256" \
+            release-input/package-lock.tsv \
+            release-input/build-metadata.json \
+            release-input/verification-report.txt
+
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
+          for asset in \
+            "$BUNDLE_NAME.tar.zst" \
+            "$BUNDLE_NAME.tar.zst.sha256" \
+            package-lock.tsv \
+            build-metadata.json \
+            verification-report.txt; do
+            size=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .size' <<<"$release_json")
+            [[ $size -gt 0 ]] || { echo "Remote asset is missing or empty: $asset" >&2; exit 1; }
+          done
+
+          mkdir -p remote-roundtrip
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$BUNDLE_NAME.tar.zst" \
+            --pattern "$BUNDLE_NAME.tar.zst.sha256" \
+            --dir remote-roundtrip
+          (cd remote-roundtrip && sha256sum -c "$BUNDLE_NAME.tar.zst.sha256")
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          trap - EXIT
+          echo "published=true" >> "$GITHUB_OUTPUT"

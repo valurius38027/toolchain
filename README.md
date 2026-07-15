@@ -25,7 +25,7 @@ Every push affecting the manifest, scripts, smoke project, documentation or rele
 4. installation using only the bundled `file:` APT repository;
 5. GCC and Clang builds, QtTest, `qmllint`, Widgets startup and QML/Quick 3D startup.
 
-Branch validation uploads a temporary Actions artifact but does not create a Release.
+Branch validation uploads a temporary Actions artifact but does not create a Release. The implementation branch is expected to pass this full validation before it is merged.
 
 Production publication is allowed only when:
 
