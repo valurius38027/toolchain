@@ -1,0 +1,72 @@
+# Build systems and general development tools
+build-essential
+gcc
+g++
+clang
+clangd
+clang-tidy
+clazy
+cmake
+ninja-build
+ccache
+pkg-config
+git
+
+# Debugging, analysis, coverage and diagnostics
+gdb
+lldb
+valgrind
+cppcheck
+gcovr
+lcov
+shellcheck
+
+# Qt 6 base, QML/Quick and desktop tools
+qt6-base-dev
+qt6-base-dev-tools
+qt6-declarative-dev
+qt6-declarative-dev-tools
+qt6-tools-dev
+qt6-tools-dev-tools
+qt6-translations-l10n
+qml-qt6
+qtcreator
+
+# Qt 6 rendering and content modules
+qt6-quick3d-dev
+qt6-quick3dphysics-dev
+qt6-shadertools-dev
+qt6-svg-dev
+qt6-image-formats-plugins
+qt6-multimedia-dev
+qt6-websockets-dev
+qt6-webchannel-dev
+qt6-webengine-dev
+qt6-pdf-dev
+qt6-wayland
+qt6-wayland-dev
+
+# Explicit QML runtime modules used by the smoke project and Qt Creator
+qml6-module-qtqml
+qml6-module-qtqml-models
+qml6-module-qtqml-workerscript
+qml6-module-qtquick
+qml6-module-qtquick-window
+qml6-module-qtquick-layouts
+qml6-module-qtquick-controls
+qml6-module-qtquick-templates
+qml6-module-qtquick-dialogs
+qml6-module-qtquick3d
+qml6-module-qtquick3d-particles3d
+qml6-module-qtquick3d-physics
+
+# Headless graphics and multimedia validation
+xvfb
+xauth
+dbus-x11
+libxcb-cursor0
+libgl1-mesa-dri
+mesa-utils
+mesa-vulkan-drivers
+vulkan-tools
+ffmpeg
