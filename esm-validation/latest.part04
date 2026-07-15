@@ -1,0 +1,176 @@
+                &scale_const(&g, self.hp.lambda),
+                 &scale_const(&update, 1.0 - self.hp.lambda),
+diff --git a/src/main.rs b/src/main.rs
+index a81d8ae..7e1e607 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -25,7 +25,6 @@ fn train_and_eval(
+         value_hidden: 16,
+         signal_dim: 4,
+         lambda,
+-        aux_coef: AUX_COEF,
+         independent_subspace: false,
+         use_feedback: false,
+         gated_feedback: false,
+diff --git a/src/model.rs b/src/model.rs
+index 893498f..873195f 100644
+--- a/src/model.rs
++++ b/src/model.rs
+@@ -6,6 +6,7 @@ use ndarray::Array2;
+ use rand::rngs::StdRng;
+ use rand::SeedableRng;
+ use rand_distr::{Distribution, Normal};
++use std::collections::HashSet;
+ 
+ pub struct HyperParams {
+     pub d_model: usize,
+@@ -17,7 +18,6 @@ pub struct HyperParams {
+     pub value_hidden: usize,
+     pub signal_dim: usize,
+     pub lambda: f32, // EMA persistence coefficient for the global broadcast state
+-    pub aux_coef: f32,
+     /// If true, each layer writes to its own dedicated g_dim/num_layers slice
+     /// of the broadcast state (via concatenation) instead of all layers'
+     /// contributions being summed elementwise into the same g_dim subspace.
+@@ -173,12 +173,33 @@ impl Layer {
+         let num_blocks = self.blocks.len();
+         let probs = self.router.forward(h);
+ 
++        assert!(
++            top_k > 0 && top_k <= num_blocks,
++            "top_k must be in 1..=num_blocks"
++        );
+         let top_indices: Vec<usize> = if let Some(f) = forced {
++            assert_eq!(
++                f.len(), top_k,
++                "forced routing width must equal top_k"
++            );
++            assert!(
++                f.iter().all(|&index| index < num_blocks),
++                "forced expert index out of range"
++            );
++            let unique: HashSet<usize> = f.iter().copied().collect();
++            assert_eq!(
++                unique.len(), f.len(),
++                "forced top-k indices must be unique"
++            );
+             f.to_vec()
+         } else {
+             let pv = probs.value();
++            assert!(
++                pv.iter().all(|value| value.is_finite()),
++                "router produced non-finite probabilities"
++            );
+             let mut idx_val: Vec<(usize, f32)> = (0..num_blocks).map(|i| (i, pv[[0, i]])).collect();
+-            idx_val.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
++            idx_val.sort_by(|a, b| b.1.total_cmp(&a.1));
+             idx_val.iter().take(top_k).map(|(i, _)| *i).collect()
+         };
+ 
+@@ -274,6 +295,25 @@ pub struct ForwardOutput {
+ 
+ impl Model {
+     pub fn new(hp: HyperParams, seed: u64) -> Self {
++        assert!(hp.d_model > 0, "d_model must be positive");
++        assert!(hp.block_hidden > 0, "block_hidden must be positive");
++        assert!(hp.num_blocks > 0, "num_blocks must be positive");
++        assert!(
++            hp.top_k > 0 && hp.top_k <= hp.num_blocks,
++            "top_k must be in 1..=num_blocks"
++        );
++        assert!(hp.num_layers > 0, "num_layers must be positive");
++        assert!(hp.g_dim > 0, "g_dim must be positive");
++        assert!(hp.value_hidden > 0, "value_hidden must be positive");
++        assert!(hp.signal_dim > 0, "signal_dim must be positive");
++        assert!(
++            hp.lambda.is_finite() && (0.0..=1.0).contains(&hp.lambda),
++            "lambda must be finite and in [0, 1]"
++        );
++        assert!(
++            !hp.gated_feedback || hp.use_feedback,
++            "gated_feedback requires use_feedback"
++        );
+         let mut rng = StdRng::seed_from_u64(seed);
+         let summary_dim = if hp.independent_subspace {
+             assert_eq!(
+@@ -352,7 +392,25 @@ impl Model {
+         lambda_override: Option<f32>,
+         forced_indices: Option<&[Vec<usize>]>,
+     ) -> ForwardOutput {
++        assert!(!inputs.is_empty(), "sequence must be non-empty");
++        assert!(
++            inputs
++                .iter()
++                .all(|input| input.dim() == (1, self.hp.d_model)),
++            "every input must have shape (1, d_model)"
++        );
++        if let Some(schedule) = forced_indices {
++            assert_eq!(
++                schedule.len(),
++                inputs.len(),
++                "forced routing schedule length must match input length"
++            );
++        }
+         let lambda = lambda_override.unwrap_or(self.hp.lambda);
++        assert!(
++            lambda.is_finite() && (0.0..=1.0).contains(&lambda),
++            "lambda override must be finite and in [0, 1]"
++        );
+         let g_dim = self.hp.g_dim;
+         let k = self.hp.num_blocks;
+         let num_layers = self.layers.len();
+diff --git a/tests/attention_ops_grad_check.rs b/tests/attention_ops_grad_check.rs
+index 48c286f..2797000 100644
+--- a/tests/attention_ops_grad_check.rs
++++ b/tests/attention_ops_grad_check.rs
+@@ -87,6 +87,8 @@ fn attention_readout_gradient_matches_finite_difference() {
+ 
+     let mut checked = 0;
+     let mut max_rel_err: f32 = 0.0;
++    let mut max_normalized_err: f32 = 0.0;
++    let mut max_abs_err: f32 = 0.0;
+ 
+     let all_tensors: Vec<(&str, &Tensor)> = std::iter::once(("query", &query))
+         .chain(
+@@ -115,8 +117,14 @@ fn attention_readout_gradient_matches_finite_difference() {
+                 let a = analytic[[r, c]];
+                 match compare_gradient(a, numeric, 1.0e-6, 2.0e-3, 8.0e-2) {
+                     Ok(GradientComparison::BelowFloor) => {}
+-                    Ok(GradientComparison::Checked { rel_error, .. }) => {
++                    Ok(GradientComparison::Checked {
++                        abs_error,
++                        rel_error,
++                        normalized_error,
++                    }) => {
++                        max_abs_err = max_abs_err.max(abs_error);
+                         max_rel_err = max_rel_err.max(rel_error);
++                        max_normalized_err = max_normalized_err.max(normalized_error);
+                         checked += 1;
+                     }
+                     Err(details) => {
+@@ -126,7 +134,9 @@ fn attention_readout_gradient_matches_finite_difference() {
+             }
+         }
+     }
+-    println!("checked {checked} entries, max relative error = {max_rel_err:.5}");
++    println!(
++        "checked {checked} entries, max abs error = {max_abs_err:.8}, max raw relative error = {max_rel_err:.5}, max tolerance-normalized error = {max_normalized_err:.5}"
++    );
+     assert!(
+         checked > 5,
+         "sanity: should have checked a meaningful number of entries"
+diff --git a/tests/common/mod.rs b/tests/common/mod.rs
+index b262605..7abcba7 100644
+--- a/tests/common/mod.rs
++++ b/tests/common/mod.rs
+@@ -3,7 +3,11 @@ use std::collections::HashSet;
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub enum GradientComparison {
+     BelowFloor,
+-    Checked { abs_error: f32, rel_error: f32 },
++    Checked {
++        abs_error: f32,
++        rel_error: f32,
++        normalized_error: f32,
++    },
+ 
