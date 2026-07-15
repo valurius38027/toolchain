@@ -1,0 +1,192 @@
+diff --git a/src/bin/context_baselines.rs b/src/bin/context_baselines.rs
+index 54a2d45..5f9a4bb 100644
+--- a/src/bin/context_baselines.rs
++++ b/src/bin/context_baselines.rs
+@@ -1,14 +1,18 @@
+ use esm_block_sparse::autodiff::{self, add, cross_entropy_loss, scale_const, Tensor};
+ use esm_block_sparse::baseline::VanillaRnnLm;
+-use esm_block_sparse::corpus::{generate_corpus, generate_holdout, CharVocab};
++use esm_block_sparse::corpus::{generate_disjoint_corpora, CharVocab};
+ use esm_block_sparse::lm::{LmHyperParams, LmModel};
+ use esm_block_sparse::optim::Adam;
+ use ndarray::Array2;
+ use rand::rngs::StdRng;
++use rand::seq::SliceRandom;
+ use rand::SeedableRng;
++use std::time::Instant;
+ 
+ const SEQUENCE_LEN: usize = 32;
+ const ROUTER_AUX_WEIGHT: f32 = 0.01;
++const RNN_HIDDEN_DIM: usize = 156;
++const ORDER_SEED_MASK: u64 = 0xA11C_E55E;
+ 
+ fn env_usize(name: &str, default: usize) -> usize {
+     std::env::var(name)
+@@ -17,6 +21,13 @@ fn env_usize(name: &str, default: usize) -> usize {
+         .unwrap_or(default)
+ }
+ 
++fn env_u64(name: &str, default: u64) -> u64 {
++    std::env::var(name)
++        .ok()
++        .and_then(|value| value.parse().ok())
++        .unwrap_or(default)
++}
++
+ fn sequences(tokens: &[usize]) -> Vec<Vec<usize>> {
+     tokens
+         .windows(SEQUENCE_LEN + 1)
+@@ -25,6 +36,12 @@ fn sequences(tokens: &[usize]) -> Vec<Vec<usize>> {
+         .collect()
+ }
+ 
++fn shuffled_indices(length: usize, rng: &mut StdRng) -> Vec<usize> {
++    let mut indices: Vec<usize> = (0..length).collect();
++    indices.shuffle(rng);
++    indices
++}
++
+ fn tensor_parameter_count(parameters: &[Tensor]) -> usize {
+     parameters
+         .iter()
+@@ -45,6 +62,7 @@ fn rnn_loss(model: &VanillaRnnLm, token_ids: &[usize]) -> Tensor {
+ }
+ 
+ fn evaluate_rnn(model: &VanillaRnnLm, data: &[Vec<usize>]) -> f32 {
++    assert!(!data.is_empty(), "holdout sequence set must be non-empty");
+     data.iter()
+         .map(|sequence| {
+             autodiff::tape_clear();
+@@ -60,13 +78,16 @@ fn train_rnn(
+     holdout: &[Vec<usize>],
+     epochs: usize,
+     seed: u64,
+-) -> (usize, f32) {
+-    let model = VanillaRnnLm::new(vocab_size, 32, 32, seed);
++) -> (usize, f32, f64) {
++    let started = Instant::now();
++    let model = VanillaRnnLm::new(vocab_size, 32, RNN_HIDDEN_DIM, seed);
+     let params = model.all_params();
+     let count = model.parameter_count();
+     let mut optimizer = Adam::new(&params, 3.0e-3);
++    let mut order_rng = StdRng::seed_from_u64(seed ^ ORDER_SEED_MASK);
+     for _ in 0..epochs {
+-        for sequence in train {
++        for index in shuffled_indices(train.len(), &mut order_rng) {
++            let sequence = &train[index];
+             for parameter in &params {
+                 parameter.zero_grad();
+             }
+@@ -77,10 +98,15 @@ fn train_rnn(
+             optimizer.step(&params);
+         }
+     }
+-    (count, evaluate_rnn(&model, holdout))
++    (
++        count,
++        evaluate_rnn(&model, holdout),
++        started.elapsed().as_secs_f64(),
++    )
+ }
+ 
+ fn evaluate_sparse(model: &LmModel, data: &[Vec<usize>]) -> f32 {
++    assert!(!data.is_empty(), "holdout sequence set must be non-empty");
+     data.iter()
+         .map(|sequence| {
+             autodiff::tape_clear();
+@@ -98,7 +124,8 @@ fn train_sparse(
+     epochs: usize,
+     seed: u64,
+     use_feedback: bool,
+-) -> (usize, f32) {
++) -> (usize, f32, f64) {
++    let started = Instant::now();
+     let model = LmModel::new(
+         LmHyperParams {
+             vocab_size,
+@@ -109,6 +136,7 @@ fn train_sparse(
+             num_layers: 2,
+             g_dim: 16,
+             lambda: 0.9,
++            independent_subspace: false,
+             use_feedback,
+             gated_feedback: false,
+             use_retrieval: false,
+@@ -120,63 +148,87 @@ fn train_sparse(
+     let params = model.all_params();
+     let count = tensor_parameter_count(&params);
+     let mut optimizer = Adam::new(&params, 3.0e-3);
++    let mut order_rng = StdRng::seed_from_u64(seed ^ ORDER_SEED_MASK);
+     for _ in 0..epochs {
+-        for sequence in train {
++        for index in shuffled_indices(train.len(), &mut order_rng) {
++            let sequence = &train[index];
+             for parameter in &params {
+                 parameter.zero_grad();
+             }
+             autodiff::tape_clear();
+             let output = model.forward_sequence(sequence);
+             let lm = model.lm_loss(&output, sequence);
+-            let routing = scale_const(&model.aux_loss(&output, sequence.len()), ROUTER_AUX_WEIGHT);
++            let routing = scale_const(
++                &model.aux_loss(&output, sequence.len()),
++                ROUTER_AUX_WEIGHT,
++            );
+             add(&lm, &routing).backward_from(Array2::from_elem((1, 1), 1.0));
+             optimizer.clip_grads(&params, 1.0);
+             optimizer.step(&params);
+         }
+     }
+-    (count, evaluate_sparse(&model, holdout))
++    (
++        count,
++        evaluate_sparse(&model, holdout),
++        started.elapsed().as_secs_f64(),
++    )
+ }
+ 
+ fn main() {
+     let epochs = env_usize("ESM_EPOCHS", 2);
+     let sentence_count = env_usize("ESM_SENTENCES", 80);
+     let holdout_count = env_usize("ESM_HOLDOUT_SENTENCES", 24);
+-    let seed = env_usize("ESM_SEED", 42) as u64;
++    let seed_start = env_u64("ESM_SEED_START", env_u64("ESM_SEED", 42));
++    let seed_count = env_usize("ESM_SEED_COUNT", 1);
++    let data_seed = env_u64("ESM_DATA_SEED", 7);
++    assert!(epochs > 0, "ESM_EPOCHS must be positive");
++    assert!(seed_count > 0, "ESM_SEED_COUNT must be positive");
+ 
+-    let mut data_rng = StdRng::seed_from_u64(7);
+-    let (training_text, characters) = generate_corpus(&mut data_rng, sentence_count);
++    let mut data_rng = StdRng::seed_from_u64(data_seed);
++    let (training_text, holdout_text, characters) =
++        generate_disjoint_corpora(&mut data_rng, sentence_count, holdout_count);
+     let vocabulary = CharVocab::new(characters);
+-    let holdout_text = generate_holdout(&mut data_rng, holdout_count);
+     let training_sequences = sequences(&vocabulary.encode(&training_text));
+     let holdout_sequences = sequences(&vocabulary.encode(&holdout_text));
+-
+-    println!("condition,seed,epochs,parameters,holdout_nll");
+-    let (parameters, loss) = train_sparse(
+-        vocabulary.vocab_size(),
+-        &training_sequences,
+-        &holdout_sequences,
+-        epochs,
+-        seed,
+-        false,
++    assert!(
++        !training_sequences.is_empty() && !holdout_sequences.is_empty(),
++        "corpus is too small for the configured sequence length"
+     );
+-    println!("context_free,{seed},{epochs},{parameters},{loss:.6}");
+ 
+-    let (parameters, loss) = train_sparse(
+-        vocabulary.vocab_size(),
+-        &training_sequences,
+-        &holdout_sequences,
+-        epochs,
+-        seed,
+-        true,
++    eprintln!(
++        "data_seed={data_seed} train_sentences={sentence_count} holdout_sentences={holdout_count} train_sequences={} holdout_sequences={}",
++        trai
