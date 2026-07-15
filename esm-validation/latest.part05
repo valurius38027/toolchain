@@ -1,0 +1,182 @@
+}
+ 
+ /// Compare one analytic/numerical gradient pair using a mixed tolerance.
+@@ -23,20 +27,23 @@ pub fn compare_gradient(
+     let scale = analytic.abs().max(numerical.abs());
+     let rel_error = abs_error / scale.max(f32::MIN_POSITIVE);
+     let allowed = abs_tolerance + rel_tolerance * scale;
++    let normalized_error = abs_error / allowed.max(f32::MIN_POSITIVE);
+     if abs_error <= allowed {
+         Ok(GradientComparison::Checked {
+             abs_error,
+             rel_error,
++            normalized_error,
+         })
+     } else {
+         Err(format!(
+-            "analytic={analytic:.8} numerical={numerical:.8} abs_error={abs_error:.8} rel_error={rel_error:.6} allowed={allowed:.8}"
++            "analytic={analytic:.8} numerical={numerical:.8} abs_error={abs_error:.8} rel_error={rel_error:.6} normalized_error={normalized_error:.6} allowed={allowed:.8}"
+         ))
+     }
+ }
+ 
+ /// Stable tensor-wide coordinate sampling. Corners are always included;
+ /// remaining entries come from an LCG and are de-duplicated.
++#[allow(dead_code)]
+ pub fn deterministic_coordinates(
+     rows: usize,
+     cols: usize,
+diff --git a/tests/grad_check.rs b/tests/grad_check.rs
+index 1e48e1b..d34b933 100644
+--- a/tests/grad_check.rs
++++ b/tests/grad_check.rs
+@@ -25,7 +25,6 @@ fn build_small_model(
+             value_hidden: 4,
+             signal_dim: 2,
+             lambda: 0.7,
+-            aux_coef: 0.01,
+             independent_subspace,
+             use_feedback,
+             gated_feedback,
+@@ -96,6 +95,8 @@ fn run_gradient_check(independent_subspace: bool, use_feedback: bool, gated_feed
+     let mut skipped_routing = 0usize;
+     let mut skipped_below_floor = 0usize;
+     let mut max_relative_error = 0.0f32;
++    let mut max_normalized_error = 0.0f32;
++    let mut max_absolute_error = 0.0f32;
+ 
+     for (tensor_index, parameter) in params.iter().enumerate() {
+         let analytic = parameter.grad();
+@@ -137,9 +138,15 @@ fn run_gradient_check(independent_subspace: bool, use_feedback: bool, gated_feed
+                 5.0e-2,
+             ) {
+                 Ok(GradientComparison::BelowFloor) => skipped_below_floor += 1,
+-                Ok(GradientComparison::Checked { rel_error, .. }) => {
++                Ok(GradientComparison::Checked {
++                    abs_error,
++                    rel_error,
++                    normalized_error,
++                }) => {
+                     checked += 1;
++                    max_absolute_error = max_absolute_error.max(abs_error);
+                     max_relative_error = max_relative_error.max(rel_error);
++                    max_normalized_error = max_normalized_error.max(normalized_error);
+                 }
+                 Err(details) => panic!(
+                     "[independent={independent_subspace} feedback={use_feedback} gated={gated_feedback}] tensor={tensor_index} coordinate=({row},{col}) {details}"
+@@ -149,7 +156,7 @@ fn run_gradient_check(independent_subspace: bool, use_feedback: bool, gated_feed
+     }
+ 
+     println!(
+-        "[independent={independent_subspace} feedback={use_feedback} gated={gated_feedback}] checked {checked} tensor-wide entries across {} tensors; skipped {skipped_routing} routing boundaries and {skipped_below_floor} pairs below floor; max relative error {max_relative_error:.6}",
++        "[independent={independent_subspace} feedback={use_feedback} gated={gated_feedback}] checked {checked} tensor-wide entries across {} tensors; skipped {skipped_routing} routing boundaries and {skipped_below_floor} pairs below floor; max abs error {max_absolute_error:.8}, max raw relative error {max_relative_error:.6}, max tolerance-normalized error {max_normalized_error:.6}",
+         params.len()
+     );
+     assert!(
+diff --git a/tests/gradient_test_support.rs b/tests/gradient_test_support.rs
+index 55a187f..bf7a65e 100644
+--- a/tests/gradient_test_support.rs
++++ b/tests/gradient_test_support.rs
+@@ -30,3 +30,13 @@ fn deterministic_coordinates_cover_tensor_not_only_top_left_corner() {
+     assert!(coordinates.contains(&(8, 10)));
+     assert!(coordinates.iter().any(|&(r, c)| r > 1 && c > 1));
+ }
++
++#[test]
++fn normalized_error_reports_fraction_of_mixed_tolerance_budget() {
++    match compare_gradient(1.0, 1.01, 1.0e-7, 0.02, 0.01).unwrap() {
++        GradientComparison::Checked { normalized_error, .. } => {
++            assert!(normalized_error > 0.0 && normalized_error <= 1.0);
++        }
++        GradientComparison::BelowFloor => panic!("material gradients must be checked"),
++    }
++}
+diff --git a/tests/lm_forward_metadata.rs b/tests/lm_forward_metadata.rs
+index bf8e8f1..b8e9c1f 100644
+--- a/tests/lm_forward_metadata.rs
++++ b/tests/lm_forward_metadata.rs
+@@ -11,6 +11,7 @@ fn retrieval_model() -> LmModel {
+             num_layers: 2,
+             g_dim: 4,
+             lambda: 0.8,
++            independent_subspace: false,
+             use_feedback: false,
+             gated_feedback: false,
+             use_retrieval: true,
+@@ -57,3 +58,30 @@ fn retrieval_metadata_identifies_query_source_and_cache_slot() {
+         out.retrieval_aux_targets.len()
+     );
+ }
++
++#[test]
++fn independent_subspace_language_model_preserves_global_state_width() {
++    let model = LmModel::new(
++        LmHyperParams {
++            vocab_size: 8,
++            d_model: 6,
++            block_hidden: 5,
++            num_blocks: 4,
++            top_k: 2,
++            num_layers: 2,
++            g_dim: 4,
++            lambda: 0.8,
++            independent_subspace: true,
++            use_feedback: true,
++            gated_feedback: false,
++            use_retrieval: false,
++            retrieval_window: 0,
++            d_key: 3,
++        },
++        23,
++    );
++    let tokens = [1usize, 4, 2, 5, 1, 4];
++    let out = model.forward_sequence(&tokens);
++    assert_eq!(out.per_step_logits.len(), tokens.len());
++    assert_eq!(out.per_step_layer_indices.len(), tokens.len());
++}
+diff --git a/tests/lm_grad_check.rs b/tests/lm_grad_check.rs
+index 03dcb4b..d83f8ce 100644
+--- a/tests/lm_grad_check.rs
++++ b/tests/lm_grad_check.rs
+@@ -16,6 +16,7 @@ fn build_small_lm(seed: u64) -> LmModel {
+             num_layers: 2,
+             g_dim: 4,
+             lambda: 0.8,
++            independent_subspace: false,
+             use_feedback: true,
+             gated_feedback: true,
+             use_retrieval: false,
+@@ -37,6 +38,7 @@ fn build_small_lm_with_retrieval(seed: u64) -> LmModel {
+             num_layers: 2,
+             g_dim: 4,
+             lambda: 0.8,
++            independent_subspace: false,
+             use_feedback: false,
+             gated_feedback: false,
+             use_retrieval: true,
+@@ -47,6 +49,28 @@ fn build_small_lm_with_retrieval(seed: u64) -> LmModel {
+     )
+ }
+ 
++fn build_small_lm_independent(seed: u64) -> LmModel {
++    LmModel::new(
++        LmHyperParams {
++            vocab_size: 7,
++            d_model: 6,
++            block_hidden: 5,
++            num_blocks: 5,
++            top_k: 2,
++            num_layers: 2,
++            g_dim: 4,
++            lambda: 0.8,
++            independent_subspace: true,
++            use_feedback: true,
++            gated_feedback: false,
++            use_retrieval: false,
++            retrieval_window: 0,
++            d_key: 4,
++        },
++        seed,
++    )
++}
++
