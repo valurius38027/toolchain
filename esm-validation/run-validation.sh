@@ -12,8 +12,9 @@ gzip --test /tmp/esm-source.tar.gz
 tar -xzf /tmp/esm-source.tar.gz -C "$SOURCE"
 test -f "$SOURCE/Cargo.toml"
 timeout 110s cargo fmt --manifest-path "$SOURCE/Cargo.toml" --all
-cat esm-validation/latest.part* > /tmp/esm-latest.patch
+cat esm-validation/patch64.part* | base64 --decode | gzip --decompress > /tmp/esm-latest.patch
 sha256sum /tmp/esm-latest.patch | tee "$RESULTS/remote-patch.sha256"
+echo 'c5ffbacefda9a42f5946fd5e90d3de6dcba4ae24d672b4ef14b0a57ab8c4ea1d  /tmp/esm-latest.patch' | sha256sum -c -
 wc -c /tmp/esm-latest.patch | tee "$RESULTS/remote-patch.bytes"
 git -C "$SOURCE" init -q
 git -C "$SOURCE" apply --check /tmp/esm-latest.patch
