@@ -1,0 +1,174 @@
+name: UltraRender development SDK
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ultrarender-dev-sdk.yml"
+      - "ultrarender-sdk/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-sdk:
+    runs-on: ubuntu-latest
+    container: debian:13
+    timeout-minutes: 45
+
+    steps:
+      - name: Install packaging prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            dpkg-dev \
+            gzip \
+            tar
+
+      - name: Resolve and download development packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /work/cache/archives/partial
+          apt-get \
+            -o Dir::Cache=/work/cache \
+            -o APT::Keep-Downloaded-Packages=true \
+            --download-only \
+            --reinstall \
+            install -y --no-install-recommends \
+              build-essential \
+              cmake \
+              ninja-build \
+              pkg-config \
+              qt6-base-dev \
+              qt6-base-private-dev \
+              qt6-base-dev-tools \
+              qt6-qpa-plugins \
+              libvulkan-dev \
+              mesa-vulkan-drivers \
+              vulkan-tools \
+              libgtest-dev \
+              googletest \
+              libfreetype-dev \
+              libharfbuzz-dev \
+              libflatbuffers-dev \
+              flatbuffers-compiler \
+              glslang-tools \
+              spirv-tools \
+              xvfb \
+              xauth
+          test -n "$(find /work/cache/archives -maxdepth 1 -name '*.deb' -print -quit)"
+
+      - name: Assemble flat offline APT repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          root=/work/ultrarender-dev-sdk-debian13-amd64
+          mkdir -p "$root/debs" "$root/scripts"
+          cp /work/cache/archives/*.deb "$root/debs/"
+          (
+            cd "$root/debs"
+            dpkg-scanpackages . /dev/null > Packages
+            gzip -9 -k Packages
+          )
+
+          cat > "$root/scripts/install-offline.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          sdk_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+          source_list="$(mktemp)"
+          trap 'rm -f "$source_list"' EXIT
+          printf 'deb [trusted=yes] file:%s/debs ./\n' "$sdk_root" > "$source_list"
+          apt_opts=(
+            -o "Dir::Etc::sourcelist=$source_list"
+            -o "Dir::Etc::sourceparts=-"
+            -o "Acquire::Languages=none"
+          )
+          apt-get "${apt_opts[@]}" update
+          apt-get "${apt_opts[@]}" --no-download install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            qt6-base-private-dev \
+            qt6-base-dev-tools \
+            qt6-qpa-plugins \
+            libvulkan-dev \
+            mesa-vulkan-drivers \
+            vulkan-tools \
+            libgtest-dev \
+            googletest \
+            libfreetype-dev \
+            libharfbuzz-dev \
+            libflatbuffers-dev \
+            flatbuffers-compiler \
+            glslang-tools \
+            spirv-tools \
+            xvfb \
+            xauth
+          SCRIPT
+
+          cat > "$root/scripts/verify-installed.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cmake --version
+          ninja --version
+          qmake6 -query QT_VERSION
+          pkg-config --modversion freetype2
+          pkg-config --modversion harfbuzz
+          test -f /usr/include/vulkan/vulkan.h
+          test -n "$(find /usr/include -path '*/QtGui/*/QtGui/private/qrhi_p.h' -o -path '*/QtGui/*/QtGui/rhi/qrhi.h' -print -quit)"
+          SCRIPT
+          chmod +x "$root/scripts/install-offline.sh" "$root/scripts/verify-installed.sh"
+
+          dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$root/runner-base-packages.tsv"
+          find "$root/debs" -maxdepth 1 -name '*.deb' -printf '%f\n' | sort > "$root/bundled-packages.txt"
+          tar -C /work -czf /work/ultrarender-dev-sdk-debian13-amd64.tar.gz "$(basename "$root")"
+          sha256sum /work/ultrarender-dev-sdk-debian13-amd64.tar.gz > /work/ultrarender-dev-sdk-debian13-amd64.tar.gz.sha256
+
+      - name: Install and verify inside runner container
+        shell: bash
+        run: |
+          set -euxo pipefail
+          bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/install-offline.sh
+          bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/verify-installed.sh
+
+          mkdir -p /work/smoke
+          cat > /work/smoke/CMakeLists.txt <<'CMAKE'
+          cmake_minimum_required(VERSION 3.25)
+          project(ur_sdk_smoke LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+          find_package(Vulkan REQUIRED)
+          find_package(GTest CONFIG REQUIRED)
+          add_executable(ur_sdk_smoke main.cpp)
+          target_link_libraries(ur_sdk_smoke PRIVATE Qt6::Core Qt6::Gui Vulkan::Vulkan GTest::gtest)
+          CMAKE
+          cat > /work/smoke/main.cpp <<'CPP'
+          #include <QCoreApplication>
+          #include <vulkan/vulkan.h>
+          #include <gtest/gtest.h>
+          #include <rhi/qrhi.h>
+          int main(int argc, char** argv) {
+              QCoreApplication app(argc, argv);
+              return VK_HEADER_VERSION > 0 && QRhi::supportedSampleCounts().size() >= 0 ? 0 : 1;
+          }
+          CPP
+          cmake -S /work/smoke -B /work/smoke/build -G Ninja
+          cmake --build /work/smoke/build --parallel 2
+          /work/smoke/build/ur_sdk_smoke
+
+      - name: Upload offline SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultrarender-dev-sdk-debian13-amd64
+          path: |
+            /work/ultrarender-dev-sdk-debian13-amd64.tar.gz
+            /work/ultrarender-dev-sdk-debian13-amd64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
