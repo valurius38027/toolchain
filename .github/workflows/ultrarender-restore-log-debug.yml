@@ -1,0 +1,52 @@
+name: UltraRender Restore Log Diagnostics
+
+on:
+  push:
+    branches:
+      - "feat/ultrarender-sdk-release"
+    paths:
+      - ".github/workflows/ultrarender-restore-log-debug.yml"
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download failed restore job log
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -o job.log \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/88433239301/logs"
+          {
+            echo '=== matched failure lines ==='
+            grep -Ein -C 5 'error|fatal|failed|failure|not found|no such|invalid|cannot|unable|unmet|mismatch|missing' job.log | tail -n 90 || true
+            echo
+            echo '=== final 35 lines ==='
+            tail -n 35 job.log
+          } > restore-log-diagnostic.txt
+
+      - name: Replace diagnostic comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### UltraRender concise offline-restore diagnostic'
+            echo '```text'
+            cat restore-log-diagnostic.txt
+            echo '```'
+          } > restore-log-comment.md
+          jq -Rs '{body: .}' restore-log-comment.md > payload.json
+          gh api \
+            --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/comments/5025479996" \
+            --input payload.json >/dev/null
