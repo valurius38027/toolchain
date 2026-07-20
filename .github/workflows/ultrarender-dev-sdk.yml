@@ -29,16 +29,17 @@ jobs:
             gzip \
             tar
 
-      - name: Resolve and download development packages
+      - name: Resolve and download complete development closure
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p /work/cache/archives/partial
+          : > /work/empty-dpkg-status
           apt-get \
             -o Dir::Cache=/work/cache \
+            -o Dir::State::status=/work/empty-dpkg-status \
             -o APT::Keep-Downloaded-Packages=true \
             --download-only \
-            --reinstall \
             install -y --no-install-recommends \
               build-essential \
               cmake \
@@ -122,7 +123,7 @@ jobs:
           pkg-config --modversion freetype2
           pkg-config --modversion harfbuzz
           test -f /usr/include/vulkan/vulkan.h
-          test -n "$(find /usr/include -path '*/QtGui/*/QtGui/private/qrhi_p.h' -o -path '*/QtGui/*/QtGui/rhi/qrhi.h' -print -quit)"
+          test -n "$(find /usr/include -type f \( -path '*/QtGui/*/QtGui/private/qrhi_p.h' -o -path '*/QtGui/*/QtGui/rhi/qrhi.h' \) -print -quit)"
           SCRIPT
           chmod +x "$root/scripts/install-offline.sh" "$root/scripts/verify-installed.sh"
 
@@ -136,23 +137,14 @@ jobs:
         run: |
           set -euxo pipefail
           bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/install-offline.sh
-
-          set +e
           bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/verify-installed.sh
-          verify_status=$?
-          set -e
 
-          echo "verify_status=$verify_status"
           echo "=== qt6-base-private-dev files matching rhi ==="
-          dpkg -L qt6-base-private-dev | grep -Ei '(/rhi/|qrhi)' || true
-          echo "=== QRhi candidates under /usr/include ==="
-          find /usr/include -type f \( -iname 'qrhi.h' -o -iname 'qrhi_p.h' \) -print || true
-          echo "=== Qt CMake package roots ==="
-          find /usr/lib -path '*/cmake/Qt6*' -maxdepth 8 -type d -print | sort || true
+          dpkg -L qt6-base-private-dev | grep -Ei '(/rhi/|qrhi)'
           echo "=== Installed package versions ==="
           dpkg-query -W -f='${binary:Package}\t${Version}\n' \
             qt6-base-dev qt6-base-private-dev libvulkan-dev libgtest-dev \
-            libfreetype-dev libharfbuzz-dev libflatbuffers-dev || true
+            libfreetype-dev libharfbuzz-dev libflatbuffers-dev
 
           mkdir -p /work/smoke
           cat > /work/smoke/CMakeLists.txt <<'CMAKE'
@@ -163,7 +155,7 @@ jobs:
           find_package(Vulkan REQUIRED)
           find_package(GTest CONFIG REQUIRED)
           add_executable(ur_sdk_smoke main.cpp)
-          target_link_libraries(ur_sdk_smoke PRIVATE Qt6::Core Qt6::Gui Vulkan::Vulkan GTest::gtest)
+          target_link_libraries(ur_sdk_smoke PRIVATE Qt6::Core Qt6::Gui Qt6::GuiPrivate Vulkan::Vulkan GTest::gtest)
           CMAKE
           cat > /work/smoke/main.cpp <<'CPP'
           #include <QCoreApplication>
@@ -172,14 +164,12 @@ jobs:
           #include <rhi/qrhi.h>
           int main(int argc, char** argv) {
               QCoreApplication app(argc, argv);
-              return VK_HEADER_VERSION > 0 && QRhi::supportedSampleCounts().size() >= 0 ? 0 : 1;
+              return VK_HEADER_VERSION > 0 && !QRhi::supportedSampleCounts().isEmpty() ? 0 : 1;
           }
           CPP
           cmake -S /work/smoke -B /work/smoke/build -G Ninja
           cmake --build /work/smoke/build --parallel 2
           /work/smoke/build/ur_sdk_smoke
-
-          exit "$verify_status"
 
       - name: Upload offline SDK artifact
         if: always()
