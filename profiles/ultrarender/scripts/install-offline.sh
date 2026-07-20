@@ -21,7 +21,7 @@ REPO_DIR=$BUNDLE_ROOT/repo
 mapfile -t PACKAGES < <(manifest_packages "$MANIFEST")
 ((${#PACKAGES[@]} > 0)) || fail 'package manifest is empty'
 
-log 'verifying every bundled package before installation'
+log 'verifying every bundled package file before installation'
 while IFS=$'\t' read -r package_name package_version package_arch filename expected_sha256; do
   [[ -n $package_name && -n $package_version && -n $package_arch && -n $filename && -n $expected_sha256 ]] || fail 'malformed package lock row'
   deb_file=$REPO_DIR/pool/$filename
@@ -29,6 +29,11 @@ while IFS=$'\t' read -r package_name package_version package_arch filename expec
   actual_sha256=$(sha256sum "$deb_file" | awk '{ print $1 }')
   [[ $actual_sha256 == "$expected_sha256" ]] || fail "checksum mismatch for package file: $filename"
 done < "$LOCK_FILE"
+
+for package_name in "${PACKAGES[@]}"; do
+  awk -F '\t' -v requested="$package_name" '$1 == requested { found = 1; exit } END { exit !found }' "$LOCK_FILE" \
+    || fail "requested package is absent from the package lock: $package_name"
+done
 
 SOURCE_FILE=$(mktemp)
 trap 'rm -f "$SOURCE_FILE"' EXIT
@@ -46,15 +51,22 @@ export DEBIAN_FRONTEND=noninteractive
 log 'updating APT exclusively from the bundled repository'
 apt-get "${APT_OPTIONS[@]}" update
 
-log "installing ${#PACKAGES[@]} requested packages from the bundled repository"
+log "installing ${#PACKAGES[@]} required toolchain packages from the bundled repository"
 apt-get "${APT_OPTIONS[@]}" --no-install-recommends install -y "${PACKAGES[@]}"
 
-log 'verifying installed package versions and architectures against the lock'
-while IFS=$'\t' read -r package_name package_version package_arch _filename _sha256; do
-  installed_version=$(dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null) || fail "locked package is not installed: $package_name"
-  installed_arch=$(dpkg-query -W -f='${Architecture}' "$package_name" 2>/dev/null) || fail "cannot query architecture: $package_name"
-  [[ $installed_version == "$package_version" ]] || fail "version mismatch for $package_name: expected $package_version, got $installed_version"
-  [[ $installed_arch == "$package_arch" ]] || fail "architecture mismatch for $package_name: expected $package_arch, got $installed_arch"
-done < "$LOCK_FILE"
+log 'verifying required toolchain package versions and architectures against the lock'
+for package_name in "${PACKAGES[@]}"; do
+  lock_row=$(awk -F '\t' -v requested="$package_name" '$1 == requested { print; exit }' "$LOCK_FILE")
+  [[ -n $lock_row ]] || fail "requested package has no lock row: $package_name"
+  IFS=$'\t' read -r _locked_name expected_version expected_arch _filename _sha256 <<< "$lock_row"
 
-log 'offline installation and package-lock verification completed'
+  installed_row=$(dpkg-query -W -f='${Status}\t${Version}\t${Architecture}' "$package_name" 2>/dev/null) \
+    || fail "required package is not installed: $package_name"
+  IFS=$'\t' read -r installed_status installed_version installed_arch <<< "$installed_row"
+
+  [[ $installed_status == 'install ok installed' ]] || fail "required package is not fully installed: $package_name ($installed_status)"
+  [[ $installed_version == "$expected_version" ]] || fail "version mismatch for $package_name: expected $expected_version, got $installed_version"
+  [[ $installed_arch == "$expected_arch" ]] || fail "architecture mismatch for $package_name: expected $expected_arch, got $installed_arch"
+done
+
+log 'offline installation, bundle integrity, and required-package verification completed'
