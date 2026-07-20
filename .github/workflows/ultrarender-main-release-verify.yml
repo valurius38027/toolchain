@@ -16,47 +16,27 @@ jobs:
   verify-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Report current main workflow and Release state
+      - name: Report publish failure context
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: a978345102b535f027f6c0b1e7ea3d63f62eeeaf
-          EXPECTED_TAG: ultrarender-sdk-debian13-v2026.07.20.1
           COMMENT_ID: "5025479996"
+          JOB_ID: "88438840699"
         run: |
           set -euo pipefail
-          runs=$(gh api --method GET \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ultrarender-debian13-release.yml/runs" \
-            -f branch=main -f event=push -f per_page=20)
-          run=$(jq -c --arg sha "$EXPECTED_SHA" \
-            '[.workflow_runs[] | select(.head_sha == $sha)] | first // {}' <<< "$runs")
-          run_id=$(jq -r '.id // "not-found"' <<< "$run")
-          status=$(jq -r '.status // "not-found"' <<< "$run")
-          conclusion=$(jq -r '.conclusion // ""' <<< "$run")
-
+          curl -fL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -o publish-job.log \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/$JOB_ID/logs"
           {
-            echo '### UltraRender main publication state'
+            echo '### UltraRender publish job failure tail'
             echo
             echo '```text'
-            printf 'expected_sha=%s\nrun_id=%s\nstatus=%s\nconclusion=%s\n' \
-              "$EXPECTED_SHA" "$run_id" "$status" "$conclusion"
-            if [[ $run_id != not-found ]]; then
-              jobs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" -f per_page=100)
-              jq -r '.jobs[] | "job=" + .name + " status=" + .status + " conclusion=" + (.conclusion // "")' <<< "$jobs"
-            fi
-            if release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$EXPECTED_TAG" 2>/dev/null); then
-              printf 'release_tag=%s draft=%s prerelease=%s assets=%s\n' \
-                "$(jq -r '.tag_name' <<< "$release")" \
-                "$(jq -r '.draft' <<< "$release")" \
-                "$(jq -r '.prerelease' <<< "$release")" \
-                "$(jq -r '.assets | length' <<< "$release")"
-              jq -r '.assets[] | "asset=" + .name + " size=" + (.size | tostring)' <<< "$release"
-            else
-              echo 'release=not-found'
-            fi
+            tail -n 90 publish-job.log
             echo '```'
           } > report.md
-
           jq -Rs '{body: .}' report.md > payload.json
           gh api --method PATCH \
             "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
