@@ -72,7 +72,7 @@ bootstrap_download_tools() {
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
   fi
-  for command_name in curl jq zstd tar sha256sum; do
+  for command_name in curl jq zstd tar sha256sum cmp; do
     require_command "$command_name"
   done
 }
@@ -91,7 +91,7 @@ api_get() {
 
 resolve_latest_tag_with_api() {
   local page response tag release_count
-  for page in $(seq 1 20); do
+  for ((page = 1; page <= 20; ++page)); do
     response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases?per_page=100&page=$page")
     tag=$(jq -r \
       --arg prefix "$TAG_PREFIX" \
@@ -193,6 +193,10 @@ mkdir -p "$EXTRACT_DIR"
 tar --zstd -xf "$ASSET_DIR/$ARCHIVE" -C "$EXTRACT_DIR"
 [[ -x $BUNDLE_ROOT/scripts/install-offline.sh ]] || fail 'archive does not contain the offline installer'
 [[ -x $BUNDLE_ROOT/scripts/verify-installed.sh ]] || fail 'archive does not contain the verification script'
+cmp -s "$ASSET_DIR/$LOCK_ASSET" "$BUNDLE_ROOT/ultrarender-package-lock.tsv" \
+  || fail 'published package lock does not match the archive copy'
+cmp -s "$ASSET_DIR/$METADATA_ASSET" "$BUNDLE_ROOT/ultrarender-build-metadata.json" \
+  || fail 'published build metadata does not match the archive copy'
 
 if [[ $DOWNLOAD_ONLY == true ]]; then
   log "release downloaded, verified and extracted at $BUNDLE_ROOT"
