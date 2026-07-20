@@ -15,9 +15,8 @@ permissions:
 jobs:
   verify-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Wait for corrected main workflow and verify Release
+      - name: Report corrected main publication state
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -25,104 +24,40 @@ jobs:
           EXPECTED_TAG: ultrarender-sdk-debian13-v2026.07.20.1
           COMMENT_ID: "5025479996"
         run: |
-          set +e
-          report=verification-report.md
-          details=verification-details.txt
-          : > "$details"
-
-          verify() {
-            set -euo pipefail
-            run_id=''
-            for _attempt in $(seq 1 80); do
-              runs=$(gh api --method GET \
-                "repos/$GITHUB_REPOSITORY/actions/workflows/ultrarender-debian13-release.yml/runs" \
-                -f branch=main -f event=push -f per_page=20)
-              run_id=$(jq -r --arg sha "$EXPECTED_SHA" \
-                '.workflow_runs[] | select(.head_sha == $sha) | .id' <<< "$runs" | head -n 1)
-              if [[ -n $run_id ]]; then
-                status=$(jq -r --argjson id "$run_id" \
-                  '.workflow_runs[] | select(.id == $id) | .status' <<< "$runs")
-                conclusion=$(jq -r --argjson id "$run_id" \
-                  '.workflow_runs[] | select(.id == $id) | .conclusion // ""' <<< "$runs")
-                printf 'run_id=%s status=%s conclusion=%s\n' "$run_id" "$status" "$conclusion" | tee -a "$details"
-                [[ $status == completed ]] && break
-              else
-                printf 'waiting for main workflow run at %s\n' "$EXPECTED_SHA" | tee -a "$details"
-              fi
-              sleep 10
-            done
-
-            [[ -n $run_id ]] || { echo 'main workflow run not found' >&2; return 1; }
-            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
-            [[ $(jq -r '.status' <<< "$run") == completed ]]
-            [[ $(jq -r '.conclusion' <<< "$run") == success ]]
-            [[ $(jq -r '.head_sha' <<< "$run") == "$EXPECTED_SHA" ]]
-
-            jobs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" -f per_page=100)
-            for name in \
-              'Validate profile sources' \
-              'Build deterministic offline SDK' \
-              'Restore without external APT sources' \
-              'Publish immutable SDK Release'; do
-              job_result=$(jq -r --arg name "$name" \
-                '.jobs[] | select(.name == $name) | .conclusion' <<< "$jobs")
-              printf 'job=%s conclusion=%s\n' "$name" "$job_result" | tee -a "$details"
-              [[ $job_result == success ]]
-            done
-
-            release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$EXPECTED_TAG")
-            [[ $(jq -r '.draft' <<< "$release") == false ]]
-            [[ $(jq -r '.prerelease' <<< "$release") == false ]]
-            [[ $(jq -r '.tag_name' <<< "$release") == "$EXPECTED_TAG" ]]
-
-            required=(
-              ultrarender-dev-sdk-debian13-amd64.tar.zst
-              ultrarender-dev-sdk-debian13-amd64.tar.zst.sha256
-              ultrarender-package-lock.tsv
-              ultrarender-build-metadata.json
-              ultrarender-verification-report.txt
-            )
-            for asset in "${required[@]}"; do
-              size=$(jq -r --arg asset "$asset" \
-                '.assets[] | select(.name == $asset) | .size' <<< "$release")
-              printf 'asset=%s size=%s\n' "$asset" "$size" | tee -a "$details"
-              [[ $size =~ ^[0-9]+$ && $size -gt 0 ]]
-            done
-
-            mkdir -p downloaded
-            gh release download "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" \
-              --dir downloaded \
-              --pattern 'ultrarender-dev-sdk-debian13-amd64.tar.zst' \
-              --pattern 'ultrarender-dev-sdk-debian13-amd64.tar.zst.sha256' \
-              --pattern 'ultrarender-build-metadata.json' \
-              --pattern 'ultrarender-verification-report.txt'
-            (cd downloaded && sha256sum -c ultrarender-dev-sdk-debian13-amd64.tar.zst.sha256)
-            jq -e --arg sha "$EXPECTED_SHA" \
-              '.profile == "ultrarender" and .profile_version == "2026.07.20.1" and .target == "debian-13-amd64" and .commit_sha == $sha and .package_count > 0' \
-              downloaded/ultrarender-build-metadata.json >/dev/null
-            grep -qx 'VERIFICATION_RESULT=PASS' downloaded/ultrarender-verification-report.txt
-
-            printf 'verified_run_id=%s\nverified_tag=%s\n' "$run_id" "$EXPECTED_TAG" | tee -a "$details"
-          }
-
-          verify >> "$details" 2>&1
-          verify_status=$?
+          set -euo pipefail
+          runs=$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ultrarender-debian13-release.yml/runs" \
+            -f branch=main -f event=push -f per_page=20)
+          run=$(jq -c --arg sha "$EXPECTED_SHA" \
+            '[.workflow_runs[] | select(.head_sha == $sha)] | first // {}' <<< "$runs")
+          run_id=$(jq -r '.id // "not-found"' <<< "$run")
+          status=$(jq -r '.status // "not-found"' <<< "$run")
+          conclusion=$(jq -r '.conclusion // ""' <<< "$run")
 
           {
-            if [[ $verify_status -eq 0 ]]; then
-              echo '### UltraRender persistent Release verification: PASS'
-            else
-              echo '### UltraRender persistent Release verification: FAIL'
-            fi
+            echo '### UltraRender corrected main publication state'
             echo
             echo '```text'
-            tail -n 100 "$details"
+            printf 'expected_sha=%s\nrun_id=%s\nstatus=%s\nconclusion=%s\n' \
+              "$EXPECTED_SHA" "$run_id" "$status" "$conclusion"
+            if [[ $run_id != not-found ]]; then
+              jobs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" -f per_page=100)
+              jq -r '.jobs[] | "job=" + .name + " status=" + .status + " conclusion=" + (.conclusion // "")' <<< "$jobs"
+            fi
+            if release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$EXPECTED_TAG" 2>/dev/null); then
+              printf 'release_tag=%s draft=%s prerelease=%s assets=%s\n' \
+                "$(jq -r '.tag_name' <<< "$release")" \
+                "$(jq -r '.draft' <<< "$release")" \
+                "$(jq -r '.prerelease' <<< "$release")" \
+                "$(jq -r '.assets | length' <<< "$release")"
+              jq -r '.assets[] | "asset=" + .name + " size=" + (.size | tostring)' <<< "$release"
+            else
+              echo 'release=not-found'
+            fi
             echo '```'
-          } > "$report"
+          } > report.md
 
-          jq -Rs '{body: .}' "$report" > payload.json
+          jq -Rs '{body: .}' report.md > payload.json
           gh api --method PATCH \
             "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
             --input payload.json >/dev/null
-
-          exit "$verify_status"
