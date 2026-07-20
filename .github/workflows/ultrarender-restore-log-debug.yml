@@ -27,20 +27,14 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             -o job.log \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/88433239301/logs"
-          {
-            echo '=== matched failure lines ==='
-            grep -Ein -C 5 'error|fatal|failed|failure|not found|no such|invalid|cannot|unable|unmet|mismatch|missing' job.log | tail -n 90 || true
-            echo
-            echo '=== final 35 lines ==='
-            tail -n 35 job.log
-          } > restore-log-diagnostic.txt
+          tail -n 70 job.log > restore-log-diagnostic.txt
 
       - name: Replace diagnostic comment
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo '### UltraRender concise offline-restore diagnostic'
+            echo '### UltraRender offline-restore final log lines'
             echo '```text'
             cat restore-log-diagnostic.txt
             echo '```'
