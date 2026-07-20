@@ -45,6 +45,8 @@ The bundle contains:
 - a CMake smoke project;
 - deterministic build metadata.
 
+The package lock is the integrity record for every bundled `.deb`. Installation explicitly requests the profile manifest and verifies those required toolchain packages against their locked versions and architectures. Transitive closure packages may be omitted by APT when the Debian base image already provides an equivalent or newer dependency, especially for transitional and virtual packages. The installer therefore does not force every closure package onto the host or downgrade the base operating system merely to reproduce an unused transitive package.
+
 The archive is produced with sorted entries, fixed ownership, and `SOURCE_DATE_EPOCH` derived from the source commit. A SHA-256 file is generated and checked before upload.
 
 ## Required Development Stack
@@ -67,14 +69,15 @@ A second clean Debian 13 container downloads the generated build artifact, verif
 
 Verification must prove:
 
-1. package versions and architectures exactly match the package lock;
-2. Qt 6 Core, Gui, and `Qt6::GuiPrivate` are discoverable by CMake;
-3. `<rhi/qrhi.h>` compiles through the private Qt target;
-4. Vulkan headers and loader are discoverable;
-5. GTest, FreeType, HarfBuzz, and FlatBuffers are discoverable;
-6. the smoke target builds with GCC and Clang;
-7. Lavapipe enumerates a CPU Vulkan device under Xvfb;
-8. the verification report ends with `VERIFICATION_RESULT=PASS`.
+1. every bundled package file matches its package-lock SHA-256, version, architecture, and filename record;
+2. every required package in the profile manifest is installed at its locked version and architecture;
+3. Qt 6 Core, Gui, and `Qt6::GuiPrivate` are discoverable by CMake;
+4. `<rhi/qrhi.h>` compiles through the private Qt target;
+5. Vulkan headers and loader are discoverable;
+6. GTest, FreeType, HarfBuzz, and FlatBuffers are discoverable;
+7. the smoke target builds with GCC and Clang;
+8. Lavapipe enumerates a CPU Vulkan device under Xvfb;
+9. the verification report ends with `VERIFICATION_RESULT=PASS`.
 
 ## Persistent Release Model
 
@@ -110,13 +113,13 @@ sudo bash profiles/ultrarender/scripts/restore.sh latest
 
 The script accepts `latest` or an explicit release tag. It downloads into a versioned cache, verifies the checksum, extracts the bundle, installs through the local APT repository, and runs the verification gates. Existing verified downloads are reused. `--force` discards the cached copy and repeats the operation.
 
-The script prefers GitHub CLI and falls back to the public GitHub REST API through `curl`. It fails closed if the tag, assets, checksum, platform, architecture, package lock, or verification result is invalid.
+The script prefers GitHub CLI and falls back to the public GitHub REST API through `curl`. It fails closed if the tag, assets, checksum, platform, architecture, package lock, required-package contract, or verification result is invalid.
 
 ## Failure and Recovery Rules
 
 - Missing dependencies fail package construction.
 - Missing or duplicate manifest entries fail linting.
 - A partial offline dependency graph fails the clean-container restore job.
-- Any compiler, CMake, QRhi, Vulkan, package-lock, or checksum failure blocks publication.
+- Any compiler, CMake, QRhi, Vulkan, required-package, package-lock-integrity, or checksum failure blocks publication.
 - Existing release tags are immutable and cannot be overwritten.
 - Operators recover by selecting a known release tag; rebuilding an old version from current Debian mirrors is not considered equivalent to downloading the original release assets.
