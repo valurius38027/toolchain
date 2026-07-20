@@ -66,7 +66,7 @@ bootstrap_download_tools() {
   command -v curl >/dev/null 2>&1 || packages+=(curl)
   command -v jq >/dev/null 2>&1 || packages+=(jq)
   command -v zstd >/dev/null 2>&1 || packages+=(zstd)
-  command -v ca-certificates >/dev/null 2>&1 || packages+=(ca-certificates)
+  [[ -r /etc/ssl/certs/ca-certificates.crt ]] || packages+=(ca-certificates)
   if ((${#packages[@]} > 0)); then
     log "installing restore bootstrap tools: ${packages[*]}"
     apt-get update
