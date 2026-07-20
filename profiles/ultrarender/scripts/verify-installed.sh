@@ -41,7 +41,7 @@ printf 'Qt: %s\n' "$(qmake6 -query QT_VERSION)"
 printf 'FreeType: %s\n' "$(pkg-config --modversion freetype2)"
 printf 'HarfBuzz: %s\n' "$(pkg-config --modversion harfbuzz)"
 flatc --version
-glslangValidator --version | head -n 2
+glslangValidator --version
 spirv-val --version
 
 build_and_test() {
