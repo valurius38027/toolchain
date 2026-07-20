@@ -19,7 +19,7 @@ BUNDLE_DIR=$OUT_DIR/$BUNDLE_NAME
 ARCHIVE=$OUT_DIR/$BUNDLE_NAME.tar.zst
 CHECKSUM=$ARCHIVE.sha256
 METADATA=$OUT_DIR/ultrarender-build-metadata.json
-VERSION=$(read_profile_version)
+VERSION=$(read_profile_version "$PROFILE_ROOT/VERSION")
 
 [[ -d $SOURCE_ROOT/repo ]] || fail 'offline repository has not been built'
 [[ -s $LOCK_FILE ]] || fail 'package lock has not been generated'
