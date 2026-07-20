@@ -1,14 +1,16 @@
 name: UltraRender ShellCheck Diagnostics
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - "feat/ultrarender-sdk-release"
     paths:
       - ".github/workflows/ultrarender-shellcheck-debug.yml"
       - "profiles/ultrarender/scripts/**"
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   diagnostics:
@@ -25,9 +27,15 @@ jobs:
           shellcheck profiles/ultrarender/scripts/lib/common.sh profiles/ultrarender/scripts/*.sh > shellcheck-report.txt 2>&1
           cat shellcheck-report.txt
           exit 0
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ultrarender-shellcheck-report-${{ github.run_id }}
-          path: shellcheck-report.txt
-          if-no-files-found: error
-          retention-days: 1
+      - name: Report diagnostics
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### ShellCheck diagnostic report'
+            echo '```text'
+            cat shellcheck-report.txt
+            echo '```'
+          } > shellcheck-comment.md
+          gh pr comment 5 --repo "$GITHUB_REPOSITORY" --body-file shellcheck-comment.md
