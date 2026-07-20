@@ -27,16 +27,22 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             -o job.log \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/88431150025/logs"
-          tail -n 160 job.log > build-log-tail.txt
+          {
+            echo '=== matched failure lines ==='
+            grep -Ein -C 3 'error|fatal|failed|failure|not found|no such|invalid|cannot|unable' job.log | tail -n 80 || true
+            echo
+            echo '=== final 35 lines ==='
+            tail -n 35 job.log
+          } > build-log-diagnostic.txt
 
       - name: Report diagnostics
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo '### UltraRender build failure log tail'
+            echo '### UltraRender concise build failure diagnostic'
             echo '```text'
-            cat build-log-tail.txt
+            cat build-log-diagnostic.txt
             echo '```'
           } > build-log-comment.md
           gh pr comment 5 --repo "$GITHUB_REPOSITORY" --body-file build-log-comment.md
