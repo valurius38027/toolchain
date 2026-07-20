@@ -89,30 +89,45 @@ api_get() {
   curl -fsSL "${headers[@]}" "$url"
 }
 
-resolve_tag_with_api() {
+resolve_latest_tag_with_api() {
+  local page response tag release_count
+  for page in $(seq 1 20); do
+    response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases?per_page=100&page=$page")
+    tag=$(jq -r \
+      --arg prefix "$TAG_PREFIX" \
+      '[.[] | select(.draft == false and .prerelease == false and (.tag_name | startswith($prefix)))] | first | .tag_name // empty' \
+      <<< "$response")
+    if [[ -n $tag ]]; then
+      printf '%s\n' "$tag"
+      return 0
+    fi
+    release_count=$(jq -r 'length' <<< "$response")
+    ((release_count < 100)) && break
+  done
+  fail "no published UltraRender SDK release found in $REPOSITORY"
+}
+
+resolve_explicit_tag_with_api() {
   local selector=$1
-  local response
-  if [[ $selector == latest ]]; then
-    response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases/latest")
-  else
-    response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases/tags/$selector")
-  fi
-  jq -er '.tag_name' <<<"$response"
+  local response tag
+  [[ $selector =~ ^ultrarender-sdk-debian13-v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] \
+    || fail "invalid UltraRender SDK release tag: $selector"
+  response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases/tags/$selector")
+  tag=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' <<< "$response")
+  [[ $tag == "$selector" ]] || fail "release tag response does not match selector: $selector"
+  printf '%s\n' "$tag"
 }
 
 resolve_tag() {
   local selector=$1
   local tag
-  if command -v gh >/dev/null 2>&1; then
-    if [[ $selector == latest ]]; then
-      tag=$(gh release view --repo "$REPOSITORY" --json tagName --jq '.tagName')
-    else
-      tag=$(gh release view "$selector" --repo "$REPOSITORY" --json tagName --jq '.tagName')
-    fi
+  if [[ $selector == latest ]]; then
+    tag=$(resolve_latest_tag_with_api)
   else
-    tag=$(resolve_tag_with_api "$selector")
+    tag=$(resolve_explicit_tag_with_api "$selector")
   fi
-  [[ $tag =~ ^ultrarender-sdk-debian13-v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] || fail "invalid UltraRender SDK release tag: $tag"
+  [[ $tag =~ ^ultrarender-sdk-debian13-v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]] \
+    || fail "invalid UltraRender SDK release tag: $tag"
   printf '%s\n' "$tag"
 }
 
@@ -144,7 +159,7 @@ fetch_assets_with_api() {
   local response asset url
   response=$(api_get "https://api.github.com/repos/$REPOSITORY/releases/tags/$tag")
   for asset in "${required_assets[@]}"; do
-    url=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$response")
+    url=$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$response")
     log "downloading $asset"
     curl -fL --retry 3 --retry-delay 2 -o "$ASSET_DIR/$asset.part" "$url"
     mv "$ASSET_DIR/$asset.part" "$ASSET_DIR/$asset"
