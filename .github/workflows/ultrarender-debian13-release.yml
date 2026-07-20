@@ -295,7 +295,7 @@ jobs:
 
           Immutable Debian 13 amd64 SDK built from commit \`$GITHUB_SHA\`.
 
-          The release passed clean-container offline installation, exact package-lock verification, GCC and Clang QRhi smoke builds, Lavapipe Vulkan enumeration, and remote archive checksum verification.
+          The release passed clean-container offline installation, bundle-integrity and required-package lock verification, GCC and Clang QRhi smoke builds, Lavapipe Vulkan enumeration, and remote archive checksum verification.
 
           Restore with:
 
@@ -307,6 +307,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$TAG" \
             --notes-file release-notes.md \
+            --latest=false \
             --draft
 
           cleanup() {
@@ -348,5 +349,5 @@ jobs:
           jq -e --arg commit "$GITHUB_SHA" '.commit_sha == $commit' \
             remote-roundtrip/ultrarender-build-metadata.json
 
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           trap - EXIT
