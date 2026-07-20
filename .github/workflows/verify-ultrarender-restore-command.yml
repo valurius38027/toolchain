@@ -23,23 +23,29 @@ jobs:
         with:
           ref: main
 
-      - name: Execute public download and verification path
+      - name: Execute full public restore and verification path
         shell: bash
         run: |
           set -euo pipefail
+          cache=/tmp/ultrarender-sdk-cache
           bash profiles/ultrarender/scripts/restore.sh latest \
-            --download-only \
-            --cache-dir /tmp/ultrarender-sdk-cache
-          extracted=$(find /tmp/ultrarender-sdk-cache -type d \
-            -path '*/extracted/ultrarender-dev-sdk-debian13-amd64' -print -quit)
-          test -n "$extracted"
+            --cache-dir "$cache"
+
+          current_tag=$(cat "$cache/current")
+          [[ $current_tag == ultrarender-sdk-debian13-v2026.07.20.1 ]]
+          local_report="$cache/$current_tag/local-verification-report.txt"
+          grep -qx 'VERIFICATION_RESULT=PASS' "$local_report"
+
+          extracted="$cache/$current_tag/extracted/ultrarender-dev-sdk-debian13-amd64"
+          test -d "$extracted"
           test -s "$extracted/ultrarender-package-lock.tsv"
           test -s "$extracted/ultrarender-build-metadata.json"
           test -x "$extracted/scripts/install-offline.sh"
           test -x "$extracted/scripts/verify-installed.sh"
-          version=$(jq -er '.profile_version' "$extracted/ultrarender-build-metadata.json")
-          printf 'resolved_tag=ultrarender-sdk-debian13-v%s\nextracted_bundle=%s\nRESTORE_COMMAND_RESULT=PASS\n' \
-            "$version" "$extracted" > /tmp/restore-command-report.txt
+
+          printf 'resolved_tag=%s\nlocal_verification_report=%s\nextracted_bundle=%s\nFULL_RESTORE_COMMAND_RESULT=PASS\n' \
+            "$current_tag" "$local_report" "$extracted" \
+            > /tmp/restore-command-report.txt
           cat /tmp/restore-command-report.txt
 
       - name: Report result
@@ -60,10 +66,10 @@ jobs:
             apt-get install -y --no-install-recommends jq
           }
           if [[ -f /tmp/restore-command-report.txt ]] && \
-             grep -qx 'RESTORE_COMMAND_RESULT=PASS' /tmp/restore-command-report.txt; then
-            title='### UltraRender public restore command verification: PASS'
+             grep -qx 'FULL_RESTORE_COMMAND_RESULT=PASS' /tmp/restore-command-report.txt; then
+            title='### UltraRender full public restore command verification: PASS'
           else
-            title='### UltraRender public restore command verification: FAIL'
+            title='### UltraRender full public restore command verification: FAIL'
           fi
           {
             echo "$title"
@@ -72,7 +78,7 @@ jobs:
             if [[ -f /tmp/restore-command-report.txt ]]; then
               cat /tmp/restore-command-report.txt
             else
-              echo 'restore command did not produce a success report'
+              echo 'full restore command did not produce a success report'
             fi
             echo '```'
           } > /tmp/comment.md
