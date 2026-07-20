@@ -90,6 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates \
@@ -111,7 +112,7 @@ jobs:
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
           export SOURCE_DATE_EPOCH
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
+          SOURCE_DATE_EPOCH=$(git -c safe.directory="$GITHUB_WORKSPACE" show -s --format=%ct "$GITHUB_SHA")
           chmod +x "$PROFILE_DIR"/scripts/*.sh "$PROFILE_DIR"/scripts/lib/*.sh
           bash "$PROFILE_DIR/scripts/build-offline-repo.sh"
           bash "$PROFILE_DIR/scripts/package-release.sh"
@@ -158,6 +159,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates zstd
 
