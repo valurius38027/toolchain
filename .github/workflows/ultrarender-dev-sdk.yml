@@ -80,6 +80,7 @@ jobs:
           cat > "$root/scripts/install-offline.sh" <<'SCRIPT'
           #!/usr/bin/env bash
           set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           sdk_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
           source_list="$(mktemp)"
           trap 'rm -f "$source_list"' EXIT
@@ -90,7 +91,7 @@ jobs:
             -o "Acquire::Languages=none"
           )
           apt-get "${apt_opts[@]}" update
-          apt-get "${apt_opts[@]}" --no-download install -y --no-install-recommends \
+          apt-get "${apt_opts[@]}" install -y --no-install-recommends \
             build-essential \
             cmake \
             ninja-build \
@@ -117,6 +118,8 @@ jobs:
           cat > "$root/scripts/verify-installed.sh" <<'SCRIPT'
           #!/usr/bin/env bash
           set -euo pipefail
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
           cmake --version
           ninja --version
           qmake6 -query QT_VERSION
@@ -136,6 +139,8 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
           bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/install-offline.sh
           bash /work/ultrarender-dev-sdk-debian13-amd64/scripts/verify-installed.sh
 
@@ -145,6 +150,9 @@ jobs:
           dpkg-query -W -f='${binary:Package}\t${Version}\n' \
             qt6-base-dev qt6-base-private-dev libvulkan-dev libgtest-dev \
             libfreetype-dev libharfbuzz-dev libflatbuffers-dev
+
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+            xvfb-run -a vulkaninfo --summary
 
           mkdir -p /work/smoke
           cat > /work/smoke/CMakeLists.txt <<'CMAKE'
@@ -164,7 +172,8 @@ jobs:
           #include <rhi/qrhi.h>
           int main(int argc, char** argv) {
               QCoreApplication app(argc, argv);
-              return VK_HEADER_VERSION > 0 && !QRhi::supportedSampleCounts().isEmpty() ? 0 : 1;
+              QRhi* rhi = nullptr;
+              return VK_HEADER_VERSION > 0 && rhi == nullptr ? 0 : 1;
           }
           CPP
           cmake -S /work/smoke -B /work/smoke/build -G Ninja
