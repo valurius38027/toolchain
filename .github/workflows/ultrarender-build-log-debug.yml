@@ -29,13 +29,13 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/88431150025/logs"
           {
             echo '=== matched failure lines ==='
-            grep -Ein -C 3 'error|fatal|failed|failure|not found|no such|invalid|cannot|unable' job.log | tail -n 80 || true
+            grep -Ein -C 3 'error|fatal|failed|failure|not found|no such|invalid|cannot|unable' job.log | tail -n 60 || true
             echo
-            echo '=== final 35 lines ==='
-            tail -n 35 job.log
+            echo '=== final 25 lines ==='
+            tail -n 25 job.log
           } > build-log-diagnostic.txt
 
-      - name: Report diagnostics
+      - name: Replace diagnostics comment
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -45,4 +45,8 @@ jobs:
             cat build-log-diagnostic.txt
             echo '```'
           } > build-log-comment.md
-          gh pr comment 5 --repo "$GITHUB_REPOSITORY" --body-file build-log-comment.md
+          jq -Rs '{body: .}' build-log-comment.md > payload.json
+          gh api \
+            --method PATCH \
+            "repos/$GITHUB_REPOSITORY/issues/comments/5025479996" \
+            --input payload.json >/dev/null
