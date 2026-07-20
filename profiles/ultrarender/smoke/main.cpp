@@ -3,8 +3,8 @@
 #include <flatbuffers/flatbuffers.h>
 #include <gtest/gtest.h>
 #include <hb.h>
-#include <rhi/qrhi.h>
 #include <vulkan/vulkan.h>
+#include <rhi/qrhi.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
