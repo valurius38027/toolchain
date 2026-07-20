@@ -14,9 +14,10 @@
 - UltraRender is a separate profile; the general Qt profile continues to exclude Qt private headers.
 - Package resolution uses an empty dpkg status database.
 - External APT sources are removed before restore verification.
+- Every bundled `.deb` is integrity-checked, while required manifest packages are version- and architecture-checked without forcing unused transitive packages onto the base OS.
 - Release assets are immutable and must not be overwritten.
 - The release version is read from `profiles/ultrarender/VERSION` and must match `YYYY.MM.DD.N`.
-- Publication requires all build, restore, compiler, QRhi, Vulkan, package-lock, and remote checksum gates to pass.
+- Publication requires all build, restore, compiler, QRhi, Vulkan, package-lock, required-package, and remote checksum gates to pass.
 
 ---
 
@@ -62,9 +63,10 @@
 
 **Interfaces:**
 - Consumes: extracted release bundle or a GitHub Release tag.
-- Produces: exact package installation, GCC/Clang smoke builds, Vulkan report, and `VERIFICATION_RESULT=PASS`.
+- Produces: bundle-integrity verification, exact required-package installation, GCC/Clang smoke builds, Vulkan report, and `VERIFICATION_RESULT=PASS`.
 
-- [ ] Install only from the extracted `file:` APT repository and verify every locked package.
+- [ ] Install only from the extracted `file:` APT repository, verify every bundled package file against the lock, and verify every manifest package at its locked version and architecture.
+- [ ] Do not require unused transitive or transitional packages to be installed merely because their `.deb` files are present in the complete offline closure.
 - [ ] Compile a C++20 target against Qt6 Core, Gui, GuiPrivate, Vulkan, GTest, FreeType, HarfBuzz, and FlatBuffers.
 - [ ] Build the target independently with GCC and Clang.
 - [ ] Enumerate Lavapipe through `vulkaninfo` under Xvfb.
