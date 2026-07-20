@@ -79,7 +79,7 @@ ultrarender-build-metadata.json
 ultrarender-verification-report.txt
 ```
 
-The archive contains a complete local APT repository and a package lock with exact package versions, architectures, filenames, and SHA-256 values.
+The archive contains a complete local APT repository and a package lock with exact package versions, architectures, filenames, and SHA-256 values. Every bundled `.deb` is checked against that lock before installation. The packages explicitly declared in `packages.txt` must then be installed at their locked versions and architectures. Unused transitive or transitional packages are not forced onto the host, so the SDK does not unnecessarily downgrade the Debian base system.
 
 ## Version and publication rules
 
@@ -94,10 +94,11 @@ Any change to the profile requires a version bump before it reaches `main`. Exis
 A release is published only after:
 
 1. the dependency closure is resolved against an empty dpkg state;
-2. the archive passes local integrity checks;
-3. a second clean Debian 13 container removes external APT sources and installs from the bundle alone;
-4. GCC and Clang compile and run the SDK smoke target;
-5. Lavapipe exposes a CPU Vulkan device;
-6. the draft Release assets are uploaded, checked for non-zero size, downloaded back from GitHub, and checksum-verified.
+2. every bundled package file passes the package-lock integrity check;
+3. a second clean Debian 13 container removes external APT sources and installs the required toolchain packages from the bundle alone;
+4. required package versions and architectures match the profile lock;
+5. GCC and Clang compile and run the SDK smoke target;
+6. Lavapipe exposes a CPU Vulkan device;
+7. the draft Release assets are uploaded, checked for non-zero size, downloaded back from GitHub, and checksum-verified.
 
 Actions artifacts are temporary transport objects. GitHub Release assets are the authoritative recovery source.
