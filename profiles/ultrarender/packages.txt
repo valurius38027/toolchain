@@ -1,0 +1,36 @@
+# Core build tools
+build-essential
+gcc
+g++
+clang
+cmake
+ninja-build
+pkg-config
+git
+ca-certificates
+zstd
+
+# Qt 6 and QRhi private development surface
+qt6-base-dev
+qt6-base-private-dev
+qt6-base-dev-tools
+qt6-qpa-plugins
+
+# Vulkan development and CPU software implementation
+libvulkan-dev
+mesa-vulkan-drivers
+vulkan-tools
+
+# Tests and data/asset toolchain
+libgtest-dev
+googletest
+libfreetype-dev
+libharfbuzz-dev
+libflatbuffers-dev
+flatbuffers-compiler
+glslang-tools
+spirv-tools
+
+# Headless graphics verification
+xvfb
+xauth
