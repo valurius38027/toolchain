@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - "feat/**"
     paths:
       - ".github/workflows/ultrarender-debian13-release.yml"
       - "profiles/ultrarender/**"
@@ -33,7 +32,7 @@ permissions:
 
 concurrency:
   group: ultrarender-sdk-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PROFILE_DIR: profiles/ultrarender
@@ -87,9 +86,6 @@ jobs:
     container:
       image: debian:13
     steps:
-      - name: Check out source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-
       - name: Install packaging bootstrap
         shell: bash
         run: |
@@ -102,6 +98,11 @@ jobs:
             gzip \
             jq \
             zstd
+
+      - name: Check out source with Git metadata
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
 
       - name: Build complete package closure and archive
         shell: bash
