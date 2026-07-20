@@ -301,6 +301,11 @@ jobs:
           EOF
 
           gh release create "$TAG" \
+            release-input/"$BUNDLE_NAME.tar.zst" \
+            release-input/"$BUNDLE_NAME.tar.zst.sha256" \
+            release-input/ultrarender-package-lock.tsv \
+            release-input/ultrarender-build-metadata.json \
+            release-input/ultrarender-verification-report.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TAG" \
@@ -308,44 +313,59 @@ jobs:
             --latest=false \
             --draft
 
+          release_json=$(gh api --method GET "repos/$GITHUB_REPOSITORY/releases" -f per_page=100)
+          release_id=$(jq -er --arg tag "$TAG" \
+            '.[] | select(.tag_name == $tag and .draft == true) | .id' <<< "$release_json" | head -n 1)
+          [[ $release_id =~ ^[0-9]+$ ]] || { echo "Draft release ID not found for $TAG" >&2; exit 1; }
+
           cleanup() {
             status=$?
             if [[ $status -ne 0 ]]; then
-              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id" >/dev/null 2>&1 || true
+              if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+                git push origin ":refs/tags/$TAG" >/dev/null 2>&1 || true
+              fi
             fi
             exit "$status"
           }
           trap cleanup EXIT
 
-          gh release upload "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            release-input/"$BUNDLE_NAME.tar.zst" \
-            release-input/"$BUNDLE_NAME.tar.zst.sha256" \
-            release-input/ultrarender-package-lock.tsv \
-            release-input/ultrarender-build-metadata.json \
-            release-input/ultrarender-verification-report.txt
-
-          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")
           for asset in \
             "$BUNDLE_NAME.tar.zst" \
             "$BUNDLE_NAME.tar.zst.sha256" \
             ultrarender-package-lock.tsv \
             ultrarender-build-metadata.json \
             ultrarender-verification-report.txt; do
-            size=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .size' <<<"$release_json")
+            size=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .size' <<< "$release_json")
+            asset_id=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .id' <<< "$release_json")
             [[ $size -gt 0 ]] || { echo "Remote asset is missing or empty: $asset" >&2; exit 1; }
+            [[ $asset_id =~ ^[0-9]+$ ]] || { echo "Remote asset ID is invalid: $asset" >&2; exit 1; }
           done
 
           mkdir -p remote-roundtrip
-          gh release download "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$BUNDLE_NAME.tar.zst" \
-            --pattern "$BUNDLE_NAME.tar.zst.sha256" \
-            --pattern ultrarender-build-metadata.json \
-            --dir remote-roundtrip
+          for asset in \
+            "$BUNDLE_NAME.tar.zst" \
+            "$BUNDLE_NAME.tar.zst.sha256" \
+            ultrarender-build-metadata.json; do
+            asset_id=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .id' <<< "$release_json")
+            gh api \
+              -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              > "remote-roundtrip/$asset"
+            test -s "remote-roundtrip/$asset"
+          done
           (cd remote-roundtrip && sha256sum -c "$BUNDLE_NAME.tar.zst.sha256")
           jq -e --arg commit "$GITHUB_SHA" '.commit_sha == $commit' \
             remote-roundtrip/ultrarender-build-metadata.json
 
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          jq -n '{draft: false, make_latest: "false"}' > publish-release.json
+          published_json=$(gh api \
+            --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            --input publish-release.json)
+          [[ $(jq -r '.draft' <<< "$published_json") == false ]]
+          [[ $(jq -r '.tag_name' <<< "$published_json") == "$TAG" ]]
+          [[ $(jq -r '.assets | length' <<< "$published_json") -eq 5 ]]
+
           trap - EXIT
