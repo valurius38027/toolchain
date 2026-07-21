@@ -10,7 +10,7 @@
 - Original archive SHA-256: `32f216017ec73e50cc6b38bc66609cf8d555c0a30eba4a58497831c058520633`
 - Local Git feature branch: `feat/production-bootstrap`
 - Completion tag: `phase/production-bootstrap-v1.1`
-- Completion commit: `782fe87a93416cdcdd90070afb4107b7e51da804`
+- Completion commit: `c4b92fd0a290380bb6a5c0be4cf2b762b589cea8`
 
 The uploaded archive did not contain `.git`; a clean local Git history was established before implementation. This record does not claim that a dedicated UltraRenderStudio GitHub source repository exists.
 
@@ -40,7 +40,7 @@ Fresh final verification passed:
 - dependency-layer lint passed;
 - final worktree was clean.
 
-A 72-byte exit-time leak was isolated with a standalone reproducer to Debian's Vulkan loader process cache. The project still corrected QRhi/Vulkan destruction order and applies a narrowly scoped LSan suppression only to Vulkan window processes.
+The real Vulkan window test's functional assertions pass, but LSan reports one 72-byte process-exit allocation whose allocation frame is inside `libvulkan.so.1`. Explicit project-resource release and an explicit `QVulkanInstance::destroy()` experiment did not remove the report, while offscreen QRhi coverage remains leak-clean. A narrowly scoped suppression is therefore applied only to the real Vulkan window test process; all other sanitizer gates remain active.
 
 ## Recovery bundle
 
@@ -48,7 +48,7 @@ Authoritative bundle metadata:
 
 - File: `UltraRenderStudio-production-bootstrap-v1.1.bundle`
 - Sidecar: `UltraRenderStudio-production-bootstrap-v1.1.bundle.sha256`
-- SHA-256: `a27cfd92569c3bb15937cd1edb1ab6f677e2fe446e6b8d44aabd673766fc970e`
+- SHA-256: `84a0a83e5458810f1afd1f95b429476fe2db6e95e4fb9dfdb11618b7326d7cd2`
 
 The bundle passed:
 
