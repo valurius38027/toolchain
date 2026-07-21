@@ -1,0 +1,10 @@
+VERIFIED_RESULT=FAIL
+SOURCE_COMMIT=45d9df06be6abf841729fb2399f7d8ef94a8c53d
+SOURCE_TAG=phase/production-bootstrap-v1
+BUNDLE_SHA256=7462e9e9012beabe22a89cefff2f84cbb113de1fea93ceb91c42d47d2e96710d
+VERIFICATION=remote-reconstruct+sha256+git-bundle-verify+fresh-clone+git-fsck
+
+DIAGNOSTIC_TAIL_BEGIN
++ bash bundles/UltraRenderStudio/production-bootstrap-v1/restore.sh
+base64: invalid input
+DIAGNOSTIC_TAIL_END
