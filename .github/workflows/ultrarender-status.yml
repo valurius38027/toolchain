@@ -43,7 +43,7 @@ jobs:
                   --jq '.jobs[] | "| \(.name) | \(.status) | \(.conclusion // "-") |"'
               fi
             } > /tmp/status.md
-            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/status.md
+            gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/status.md
             exit 0
           fi
 
@@ -67,4 +67,4 @@ jobs:
             tail -n 180 "$text"
             echo '```'
           } > /tmp/diagnostic.md
-          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/diagnostic.md
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/diagnostic.md
