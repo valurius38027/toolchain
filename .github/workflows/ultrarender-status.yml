@@ -1,0 +1,41 @@
+name: UltraRender SDK Status Probe
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    if: github.event.comment.body == '/sdk-status'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report latest UltraRender SDK runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ultrarender-debian13-release.yml/runs?branch=main&per_page=5")
+          {
+            echo '## UltraRender SDK workflow status'
+            echo
+            echo '| Run | Commit | Status | Conclusion | Event |'
+            echo '| ---: | --- | --- | --- | --- |'
+            jq -r '.workflow_runs[] | "| [\(.id)](\(.html_url)) | `\(.head_sha)` | \(.status) | \(.conclusion // "-") | \(.event) |"' <<< "$runs"
+            latest=$(jq -r '.workflow_runs[0].id // empty' <<< "$runs")
+            if [[ -n $latest ]]; then
+              echo
+              echo '### Latest jobs'
+              echo
+              echo '| Job | Status | Conclusion |'
+              echo '| --- | --- | --- |'
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$latest/jobs?per_page=100" \
+                --jq '.jobs[] | "| \(.name) | \(.status) | \(.conclusion // "-") |"'
+            fi
+          } > /tmp/status.md
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/status.md
