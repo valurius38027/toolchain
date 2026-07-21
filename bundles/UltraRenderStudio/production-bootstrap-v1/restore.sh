@@ -12,7 +12,13 @@ command -v sha256sum >/dev/null
 command -v git >/dev/null
 
 test -d "$root/encoded"
+test -s "$root/encoded/SHA256SUMS"
 test -s "$sidecar"
+
+(
+  cd "$root/encoded"
+  sha256sum -c SHA256SUMS
+)
 
 mapfile -t parts < <(find "$root/encoded" -maxdepth 1 -type f -name 'part-*' -print | sort)
 test "${#parts[@]}" -eq 9
