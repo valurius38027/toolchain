@@ -1,0 +1,72 @@
+name: Verify UltraRenderStudio Bundle Vault
+
+on:
+  push:
+    branches:
+      - ultrarenderstudio/bundle-vault
+    paths:
+      - "bundles/UltraRenderStudio/production-bootstrap-v1/encoded/**"
+      - "bundles/UltraRenderStudio/production-bootstrap-v1/*.sha256"
+      - "bundles/UltraRenderStudio/production-bootstrap-v1/restore.sh"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-ultrarenderstudio-production-bootstrap-v1
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out vault branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ultrarenderstudio/bundle-vault
+
+      - name: Reconstruct and verify bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=bundles/UltraRenderStudio/production-bootstrap-v1
+          bash "$root/restore.sh"
+          rm -rf /tmp/UltraRenderStudio-vault-verify
+          git clone "$root/UltraRenderStudio-production-bootstrap-v1.bundle" \
+            /tmp/UltraRenderStudio-vault-verify
+          git -C /tmp/UltraRenderStudio-vault-verify fsck --full
+          actual=$(git -C /tmp/UltraRenderStudio-vault-verify \
+            rev-parse 'phase/production-bootstrap-v1^{}')
+          test "$actual" = 45d9df06be6abf841729fb2399f7d8ef94a8c53d
+
+      - name: Record authoritative verification marker
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          path=bundles/UltraRenderStudio/production-bootstrap-v1/VERIFIED.txt
+          content=$(cat <<'EOF'
+          VERIFIED_RESULT=PASS
+          SOURCE_COMMIT=45d9df06be6abf841729fb2399f7d8ef94a8c53d
+          SOURCE_TAG=phase/production-bootstrap-v1
+          BUNDLE_SHA256=7462e9e9012beabe22a89cefff2f84cbb113de1fea93ceb91c42d47d2e96710d
+          VERIFICATION=remote-reconstruct+sha256+git-bundle-verify+fresh-clone+git-fsck
+          EOF
+          )
+          encoded=$(printf '%s\n' "$content" | base64 -w0)
+          existing_sha=$(gh api \
+            "repos/$GITHUB_REPOSITORY/contents/$path?ref=ultrarenderstudio%2Fbundle-vault" \
+            --jq .sha 2>/dev/null || true)
+          args=(
+            --method PUT
+            "repos/$GITHUB_REPOSITORY/contents/$path"
+            -f message='vault: record verified UltraRenderStudio bundle'
+            -f content="$encoded"
+            -f branch='ultrarenderstudio/bundle-vault'
+          )
+          if [[ -n $existing_sha ]]; then
+            args+=(-f sha="$existing_sha")
+          fi
+          gh api "${args[@]}" >/dev/null
