@@ -6,5 +6,14 @@ VERIFICATION=remote-reconstruct+sha256+git-bundle-verify+fresh-clone+git-fsck
 
 DIAGNOSTIC_TAIL_BEGIN
 + bash bundles/UltraRenderStudio/production-bootstrap-v1/restore.sh
-base64: invalid input
+part-000: FAILED
+part-001: OK
+part-002: FAILED
+part-003: OK
+part-004: FAILED
+part-005: FAILED
+part-006: OK
+part-007: OK
+part-008: FAILED
+sha256sum: WARNING: 5 computed checksums did NOT match
 DIAGNOSTIC_TAIL_END
