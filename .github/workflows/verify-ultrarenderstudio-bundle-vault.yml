@@ -27,32 +27,49 @@ jobs:
           ref: ultrarenderstudio/bundle-vault
 
       - name: Reconstruct and verify bundle
+        id: verify
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           root=bundles/UltraRenderStudio/production-bootstrap-v1
-          bash "$root/restore.sh"
-          rm -rf /tmp/UltraRenderStudio-vault-verify
-          git clone "$root/UltraRenderStudio-production-bootstrap-v1.bundle" \
-            /tmp/UltraRenderStudio-vault-verify
-          git -C /tmp/UltraRenderStudio-vault-verify fsck --full
-          actual=$(git -C /tmp/UltraRenderStudio-vault-verify \
-            rev-parse 'phase/production-bootstrap-v1^{}')
-          test "$actual" = 45d9df06be6abf841729fb2399f7d8ef94a8c53d
+          {
+            set -euxo pipefail
+            bash "$root/restore.sh"
+            rm -rf /tmp/UltraRenderStudio-vault-verify
+            git clone "$root/UltraRenderStudio-production-bootstrap-v1.bundle" \
+              /tmp/UltraRenderStudio-vault-verify
+            git -C /tmp/UltraRenderStudio-vault-verify fsck --full
+            actual=$(git -C /tmp/UltraRenderStudio-vault-verify \
+              rev-parse 'phase/production-bootstrap-v1^{}')
+            test "$actual" = 45d9df06be6abf841729fb2399f7d8ef94a8c53d
+          } > /tmp/ultrarenderstudio-vault-verification.log 2>&1
 
       - name: Record authoritative verification marker
+        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
         run: |
           set -euo pipefail
           path=bundles/UltraRenderStudio/production-bootstrap-v1/VERIFIED.txt
-          content=$(cat <<'EOF'
-          VERIFIED_RESULT=PASS
+          if [[ $VERIFY_OUTCOME == success ]]; then
+            result=PASS
+          else
+            result=FAIL
+          fi
+          diagnostic=$(tail -n 30 /tmp/ultrarenderstudio-vault-verification.log 2>/dev/null || echo 'verification step did not produce a log')
+          content=$(cat <<EOF
+          VERIFIED_RESULT=$result
           SOURCE_COMMIT=45d9df06be6abf841729fb2399f7d8ef94a8c53d
           SOURCE_TAG=phase/production-bootstrap-v1
           BUNDLE_SHA256=7462e9e9012beabe22a89cefff2f84cbb113de1fea93ceb91c42d47d2e96710d
           VERIFICATION=remote-reconstruct+sha256+git-bundle-verify+fresh-clone+git-fsck
+
+          DIAGNOSTIC_TAIL_BEGIN
+          $diagnostic
+          DIAGNOSTIC_TAIL_END
           EOF
           )
           encoded=$(printf '%s\n' "$content" | base64 -w0)
@@ -70,3 +87,10 @@ jobs:
             args+=(-f sha="$existing_sha")
           fi
           gh api "${args[@]}" >/dev/null
+
+      - name: Enforce verification result
+        if: always()
+        shell: bash
+        env:
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        run: test "$VERIFY_OUTCOME" = success
