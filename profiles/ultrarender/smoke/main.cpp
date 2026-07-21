@@ -4,8 +4,8 @@
 #include <gtest/gtest.h>
 #include <hb-ft.h>
 #include <hb.h>
-#include <rhi/qrhi.h>
 #include <vulkan/vulkan.h>
+#include <rhi/qrhi.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
