@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This script is the canonical reconstruction entry point for the vault CI and operators.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bundle_name=UltraRenderStudio-production-bootstrap-v1.bundle
 bundle="$root/$bundle_name"
