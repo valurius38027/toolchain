@@ -61,11 +61,10 @@ jobs:
             cp "$raw" "$text"
           fi
           {
-            printf '## UltraRender SDK diagnostic: run `%s`\n\n' "$run_id"
+            printf '## UltraRender SDK diagnostic tail: run `%s`\n\n' "$run_id"
             printf -- '- Failed job: `%s` (`%s`)\n\n' "$job_name" "$job_id"
             echo '```text'
-            grep -Eai -B 8 -A 30 'error:|failed|failure|not found|missing|qsb|shader|freetype|harfbuzz|ctest' "$text" \
-              | tail -n 260 || tail -n 220 "$text"
+            tail -n 180 "$text"
             echo '```'
           } > /tmp/diagnostic.md
           gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/diagnostic.md
