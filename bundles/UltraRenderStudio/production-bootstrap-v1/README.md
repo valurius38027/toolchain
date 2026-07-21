@@ -21,9 +21,9 @@ Do not run `restore.sh`, do not clone a reconstructed file from this directory, 
 The corrected completed phase is:
 
 - Tag: `phase/production-bootstrap-v1.1`
-- Commit: `782fe87a93416cdcdd90070afb4107b7e51da804`
+- Commit: `c4b92fd0a290380bb6a5c0be4cf2b762b589cea8`
 - Bundle filename: `UltraRenderStudio-production-bootstrap-v1.1.bundle`
-- Bundle SHA-256: `a27cfd92569c3bb15937cd1edb1ab6f677e2fe446e6b8d44aabd673766fc970e`
+- Bundle SHA-256: `84a0a83e5458810f1afd1f95b429476fe2db6e95e4fb9dfdb11618b7326d7cd2`
 
 The v1.1 bundle was verified locally with:
 
@@ -31,6 +31,6 @@ The v1.1 bundle was verified locally with:
 2. `git bundle verify`;
 3. a fresh clone from the bundle;
 4. `git fsck --full`;
-5. confirmation that `phase/production-bootstrap-v1.1` resolves to commit `782fe87a93416cdcdd90070afb4107b7e51da804`.
+5. confirmation that `phase/production-bootstrap-v1.1` resolves to commit `c4b92fd0a290380bb6a5c0be4cf2b762b589cea8`.
 
 A dedicated normal Git remote for UltraRenderStudio remains the preferred durable source repository. Until one is supplied or created, the verified v1.1 bundle and its sidecar are the authoritative recovery artifacts from this engineering session.
