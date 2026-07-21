@@ -15,17 +15,19 @@ qt6-base-dev
 qt6-base-private-dev
 qt6-base-dev-tools
 qt6-qpa-plugins
+qt6-shader-baker
 
 # Vulkan development and CPU software implementation
 libvulkan-dev
 mesa-vulkan-drivers
 vulkan-tools
 
-# Tests and data/asset toolchain
+# Tests, fonts and data/asset toolchain
 libgtest-dev
 googletest
 libfreetype-dev
 libharfbuzz-dev
+fonts-dejavu-core
 libflatbuffers-dev
 flatbuffers-compiler
 glslang-tools

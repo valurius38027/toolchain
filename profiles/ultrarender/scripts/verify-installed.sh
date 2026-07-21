@@ -19,10 +19,14 @@ WORK_DIR=${VERIFY_WORK_DIR:-$BUNDLE_ROOT/verification-work}
 REPORT=${VERIFICATION_REPORT:-$BUNDLE_ROOT/ultrarender-verification-report.txt}
 VULKAN_REPORT=$WORK_DIR/vulkan-summary.txt
 LVP_ICD=/usr/share/vulkan/icd.d/lvp_icd.json
+QSB=/usr/lib/qt6/bin/qsb
+DEFAULT_FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
 
 [[ -f $LVP_ICD ]] || fail "Lavapipe ICD not found: $LVP_ICD"
 [[ -f /usr/include/vulkan/vulkan.h ]] || fail 'Vulkan development header is missing'
 [[ -n $(find /usr/include -type f \( -path '*/QtGui/*/QtGui/rhi/qrhi.h' -o -path '*/QtGui/*/QtGui/private/qrhi_p.h' \) -print -quit) ]] || fail 'Qt QRhi header is missing'
+[[ -x $QSB ]] || fail "Qt shader baker is missing: $QSB"
+[[ -f $DEFAULT_FONT ]] || fail "Deterministic default font is missing: $DEFAULT_FONT"
 
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
@@ -43,6 +47,19 @@ printf 'HarfBuzz: %s\n' "$(pkg-config --modversion harfbuzz)"
 flatc --version
 glslangValidator --version
 spirv-val --version
+"$QSB" --version
+
+printf '\n== Qt shader baker ==\n'
+cat > "$WORK_DIR/qsb-probe.vert" <<'EOF'
+#version 440
+layout(location = 0) in vec2 position;
+void main()
+{
+    gl_Position = vec4(position, 0.0, 1.0);
+}
+EOF
+"$QSB" -o "$WORK_DIR/qsb-probe.vert.qsb" "$WORK_DIR/qsb-probe.vert"
+[[ -s $WORK_DIR/qsb-probe.vert.qsb ]] || fail 'Qt shader baker produced no output'
 
 build_and_test() {
   local name=$1
