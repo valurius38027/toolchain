@@ -1,11 +1,12 @@
 # UltraRender Persistent Engineering Baseline
 
 **Recorded:** 2026-07-20  
+**Updated:** 2026-07-21  
 **Status:** Authoritative recovery and engineering-entry record
 
 ## 1. Authoritative toolchain recovery source
 
-The authoritative recovery source for all subsequent UltraRenderStudio engineering is:
+The authoritative toolchain recovery source for all subsequent UltraRenderStudio engineering is:
 
 - Repository: `valurius38027/toolchain`
 - Branch: `main`
@@ -33,56 +34,83 @@ The release has passed:
 
 A later profile change must bump `profiles/ultrarender/VERSION`; an existing release or tag must never be overwritten.
 
-## 2. Current UltraRenderStudio code reality
+## 2. Authoritative UltraRenderStudio source
 
-The last known implementation state is:
+The canonical source repository is:
+
+- Repository: `valurius38027/UltraRenderStudio`
+- Branch: `main`
+- Remote URL: `https://github.com/valurius38027/UltraRenderStudio.git`
+- Remote branch policy: maintain `main` only
+- Latest completed engineering phase: `production-bootstrap-v1.1`
+
+Remote feature, development, release, and bundle-vault branches are not part of the maintenance model. Temporary local worktrees may be used for isolation, but completed work is integrated into `main` and the temporary branch is removed. Durable milestones use annotated `phase/*` tags and immutable GitHub Release bundle assets.
+
+`AGENTS.md` in the source repository is the highest-authority operating constraint. `INDEX.md` records the current code reality and next formal milestone.
+
+## 3. Current UltraRenderStudio code reality
+
+The module direction remains:
 
 ```text
 ur_platform
   -> ur_gfx
   -> ur_text
   -> ur_widgets
-  -> dock / nodegraph / viewport
+  -> ur_dock / ur_nodegraph / ur_viewport
 ```
 
-Implemented baseline:
+Production Bootstrap has closed:
 
-- offscreen Vulkan rectangle rendering;
-- a minimal immediate-mode `button()` state machine;
-- a tested `DrawList -> ur_gfx -> Vulkan -> pixel readback` path;
-- a thin UltraRender C ABI session wrapper.
+- strict GCC and Clang warning gates;
+- Qt-to-platform FIFO events for expose, resize, pointer, focus, and close;
+- a private `QWindow` integration bridge without public native handles;
+- Vulkan QRhi offscreen rendering and deterministic pixel readback;
+- real `QWindow -> QVulkanInstance -> QRhi -> swapchain -> present` rendering;
+- resize and swapchain recovery under Xvfb and Mesa Lavapipe;
+- two-stage topmost widget hit arbitration;
+- stale active/capture cleanup and focus-loss cancellation;
+- a real editor frame loop with deterministic finite-frame smoke mode.
 
 Not yet closed:
 
-- presentation of the editor window to a real surface;
-- production event/input routing;
-- retained editor composition and docking closure;
+- minimum text rendering and measurement;
+- scoped widget IDs, clipping/scissor, overlay ordering, and basic layout;
+- retained editor composition and docking;
 - node graph and viewport production integration;
-- end-to-end editor-to-renderer interaction.
+- complete UltraRender engine ABI provenance, capability negotiation, and end-to-end rendering integration;
+- production-verified non-Vulkan backends.
 
-This is an engineering baseline, not a claim that the editor is production-ready.
+This is a production bootstrap, not a claim that the complete editor is production-ready.
 
-## 3. Engineering authority and operating rules
+## 4. Engineering authority and operating rules
 
 1. Restore and verify the SDK before modifying UltraRenderStudio.
-2. Use the actual source checkout with valid `.git` metadata as the code authority.
-3. `AGENT.md` or `AGENTS.md`, when present in the UltraRenderStudio repository, is the highest-authority repository constraint document.
-4. `INDEX.md` is only a maintained code-reality index; it must not replace agent constraints, architecture specifications, or implementation plans.
-5. Do not infer the source repository from the toolchain repository. The UltraRenderStudio source checkout or canonical remote must be identified explicitly before implementation.
-6. Preserve the existing layer boundaries unless a reviewed design demonstrates a concrete defect.
-7. Formal engineering begins by reproducing the current build/tests and recording the exact baseline before feature work.
-8. No implementation phase is complete without fresh build, test, and runtime evidence.
+2. Use `valurius38027/UltraRenderStudio` on `main` as the source authority.
+3. Read `AGENTS.md`, then `INDEX.md`, then applicable ADRs before implementation.
+4. Preserve the dependency boundaries unless an approved design demonstrates a concrete defect.
+5. Use test-first development for behavior changes and bug fixes.
+6. Keep `UR_WARNINGS_AS_ERRORS=ON`; do not weaken sanitizers or runtime gates to obtain a pass.
+7. Window or GPU behavior requires Xvfb/Lavapipe or a real supported platform backend.
+8. No phase is complete without fresh GCC, Clang, CTest, runtime, dependency-lint, tag, bundle, checksum, fresh-clone, and `git fsck` evidence.
+9. Existing phase tags and Release assets are immutable.
+10. Do not begin Dock before minimum text and the Dock prerequisite UI foundation are closed.
 
-## 4. Immediate entry condition
+## 5. Recovery and engineering entry
 
-Before the first production implementation task, identify the canonical UltraRenderStudio source repository or provide the latest workspace/archive. Then perform:
+After host cleanup:
 
 ```bash
-git rev-parse --show-toplevel
-git branch --show-current
+git clone https://github.com/valurius38027/toolchain.git
+git clone https://github.com/valurius38027/UltraRenderStudio.git
+cd toolchain
+sudo bash profiles/ultrarender/scripts/restore.sh latest
+cd ../UltraRenderStudio
+git switch main
 git status --short
 git log -5 --oneline --decorate
-sudo bash /path/to/toolchain/profiles/ultrarender/scripts/restore.sh latest
 ```
 
-After source and toolchain verification, inspect repository authority documents, architecture, current tests, and recent commits before writing the first production-stage design.
+Then run the strict GCC and Clang commands documented in the UltraRenderStudio `README.md`. Inspect `AGENTS.md`, `INDEX.md`, the relevant ADRs, and recent commits before writing or executing the next milestone design.
+
+The next formal milestone is **Minimal Text Rendering Closure**. Dock remains blocked until text measurement, scoped IDs, clipping/scissor, overlay ordering, and basic layout consumption are closed.
