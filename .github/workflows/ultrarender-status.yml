@@ -64,7 +64,7 @@ jobs:
             printf '## UltraRender SDK diagnostic tail: run `%s`\n\n' "$run_id"
             printf -- '- Failed job: `%s` (`%s`)\n\n' "$job_name" "$job_id"
             echo '```text'
-            tail -n 180 "$text"
+            tail -n 70 "$text"
             echo '```'
           } > /tmp/diagnostic.md
           gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/diagnostic.md
